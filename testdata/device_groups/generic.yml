@@ -9,8 +9,8 @@ generic:
     - ietf_tcp
     - ietf_udp
     - ietf_snmp
-    - ietf_bridge
-    # - ietf_p_bridge   # no attribute definitions — produces "no attributes matched" warnings
+    # - ietf_bridge
+    # - ietf_p_bridge   
     # - ietf_q_bridge
-    # - ietf_rstp       # no attribute definitions — produces "no attributes matched" warnings
+    # - ietf_rstp       
     # vendor-specific

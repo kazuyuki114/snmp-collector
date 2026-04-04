@@ -508,112 +508,81 @@ func (t *Transport) Close() error {
 
 ### Example: Kafka Transport
 
+The Kafka transport is fully implemented at `plugin/transport/kafka/`.
+See [kafka-transport.md](kafka-transport.md) for its complete documentation.
+
+Its design illustrates the recommended pattern for transports that need
+**internal buffering and batching**:
+
+```
+Send([]byte)  ──►  buffered channel  ──►  single worker goroutine  ──►  sarama.SendMessages
+```
+
+Key points from the real implementation:
+
+- **No mutex on the hot path.** The worker goroutine is the sole owner of the
+  batch slice; `Send` only writes to the channel.
+- **Two flush triggers** inside the worker's `for/select`: size limit
+  (`MaxEvents`) and age limit (`FlushInterval` ticker).
+- **Graceful drain on shutdown.** When `Close` closes the `quit` channel, the
+  worker non-blocking-drains remaining channel items before flushing the last
+  batch.
+- **`sync.Once` in `Close`** prevents double-close panics even if the engine
+  calls it more than once.
+
 ```go
-package kafka
-
-import (
-    "fmt"
-    "log/slog"
-    "sync"
-
-    "github.com/snmp/snmp_collector/plugin"
-)
-
-var _ plugin.Transport = (*Transport)(nil)
-
-type Config struct {
-    Brokers    []string // e.g. ["kafka-1:9092", "kafka-2:9092"]
-    Topic      string   // e.g. "snmp.metrics"
-    BatchSize  int      // flush after N messages (default 100)
-    MaxRetries int      // retry on transient errors (default 3)
-}
+// Simplified structure — see plugin/transport/kafka/kafka.go for full code.
 
 type Transport struct {
-    mu     sync.Mutex
-    cfg    Config
-    logger *slog.Logger
-    buf    [][]byte
-    // producer sarama.SyncProducer  // real Kafka client
+    cfg      Config
+    producer sarama.SyncProducer
+    logger   *slog.Logger
+    ch       chan []byte    // decouples Send from the worker
+    quit     chan struct{}  // closed by Close to signal shutdown
+    done     chan struct{}  // closed by worker when it exits
+    closeOnce sync.Once
 }
-
-func New(cfg Config, logger *slog.Logger) (*Transport, error) {
-    if len(cfg.Brokers) == 0 {
-        return nil, fmt.Errorf("kafka transport: at least one broker required")
-    }
-    if cfg.Topic == "" {
-        return nil, fmt.Errorf("kafka transport: topic is required")
-    }
-    if logger == nil {
-        logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
-    }
-    if cfg.BatchSize <= 0 {
-        cfg.BatchSize = 100
-    }
-    if cfg.MaxRetries <= 0 {
-        cfg.MaxRetries = 3
-    }
-
-    // TODO: create Kafka producer client here
-    // producer, err := sarama.NewSyncProducer(cfg.Brokers, saramaConfig)
-
-    logger.Info("kafka transport: configured",
-        "brokers", cfg.Brokers,
-        "topic", cfg.Topic,
-        "batch_size", cfg.BatchSize,
-    )
-
-    return &Transport{
-        cfg:    cfg,
-        logger: logger,
-        buf:    make([][]byte, 0, cfg.BatchSize),
-    }, nil
-}
-
-func (t *Transport) Name() string { return "kafka" }
 
 func (t *Transport) Send(data []byte) error {
-    t.mu.Lock()
-    defer t.mu.Unlock()
-
-    // Copy data (the engine may reuse the slice)
-    msg := make([]byte, len(data))
+    msg := make([]byte, len(data)) // copy — caller may reuse the slice
     copy(msg, data)
-    t.buf = append(t.buf, msg)
-
-    if len(t.buf) >= t.cfg.BatchSize {
-        return t.flush()
+    select {
+    case t.ch <- msg:
+        return nil
+    case <-t.quit:
+        return errors.New("kafka transport: transport is closed")
     }
-    return nil
 }
 
-func (t *Transport) Close() error {
-    t.mu.Lock()
-    defer t.mu.Unlock()
-
-    // Flush remaining buffered messages
-    if len(t.buf) > 0 {
-        if err := t.flush(); err != nil {
-            return fmt.Errorf("kafka transport: final flush: %w", err)
+func (t *Transport) worker() {
+    defer close(t.done)
+    ticker := time.NewTicker(t.cfg.FlushInterval)
+    defer ticker.Stop()
+    var batch []*sarama.ProducerMessage
+    for {
+        select {
+        case data := <-t.ch:
+            batch = append(batch, t.makeMessage(data))
+            if len(batch) >= t.cfg.MaxEvents {
+                t.flush(batch); batch = batch[:0]
+            }
+        case <-ticker.C:
+            if len(batch) > 0 {
+                t.flush(batch); batch = batch[:0]
+            }
+        case <-t.quit:
+            for { // drain remaining buffered items
+                select {
+                case data := <-t.ch:
+                    batch = append(batch, t.makeMessage(data))
+                default:
+                    if len(batch) > 0 { t.flush(batch) }
+                    return
+                }
+            }
         }
     }
-
-    // TODO: close Kafka producer
-    t.logger.Info("kafka transport: closed")
-    return nil
 }
-
-func (t *Transport) flush() error {
-    if len(t.buf) == 0 {
-        return nil
-    }
-    // TODO: send t.buf to Kafka
-    t.logger.Debug("kafka transport: flushed", "messages", len(t.buf))
-    t.buf = t.buf[:0]
-    return nil
-}
-
-type noopWriter struct{}
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }
 ```
 
 ### Transport Testing
@@ -812,3 +781,21 @@ Scheduler → WorkerPool → [rawCh] → Decoder → [decodedCh] → Producer �
 **Config fields:** `FilePath`, `MaxBytes`, `MaxBackups`, `Newline`
 
 **Rotation scheme:** `metrics.json` → `metrics.json.1` → `metrics.json.2` → pruned
+
+### Transport: Kafka (`plugin/transport/kafka/`)
+
+| File | Purpose |
+|------|---------|
+| `kafka.go` | `Config`, `Transport`, `New`, `Send`, `Close`, batching worker, sarama config builder |
+| `scram.go` | `scramClient` — implements `sarama.SCRAMClient` for SCRAM-SHA-256/512 SASL |
+
+**Config fields:** `Brokers`, `Topic`, `MaxEvents`, `FlushInterval`, `BufferSize`,
+`ClientID`, `RequiredAcks`, `MaxRetry`, `Compression`, `Version`, `TLS`, `SASL`
+
+**Batching model:** worker goroutine collects into a `[]*sarama.ProducerMessage`
+slice and calls `producer.SendMessages` when `MaxEvents` is reached or
+`FlushInterval` elapses — whichever comes first.
+
+**Security:** TLS (one-way and mTLS) + SASL (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512).
+
+See [kafka-transport.md](kafka-transport.md) for full documentation.

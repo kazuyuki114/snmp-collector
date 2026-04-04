@@ -1,0 +1,105 @@
+# snmpcollector configuration file
+#
+# Usage:
+#   snmpcollector -config /etc/snmpcollector/config.yaml
+#
+# Any value in this file can be overridden by a CLI flag:
+#   snmpcollector -config config.yaml -log.level debug
+#
+# Priority (highest wins):
+#   1. CLI flags
+#   2. This file
+#   3. Environment variables  (config_paths only)
+#   4. Built-in defaults
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+log:
+  level: info     # debug | info | warn | error
+  format: json    # json | text
+
+# ── Identity ─────────────────────────────────────────────────────────────────
+collector_id: ""  # defaults to system hostname when empty
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+pipeline:
+  buffer_size: 10000      # capacity of each inter-stage channel
+  decode_workers: 1       # parallel decode goroutines
+  produce_workers: 1      # parallel produce goroutines
+
+# ── Poller ───────────────────────────────────────────────────────────────────
+poller:
+  workers: 500            # concurrent SNMP poller goroutines
+  pool:
+    max_idle: 2           # max idle SNMP connections per device
+    idle_timeout: 30s     # how long an idle connection is kept open
+
+# ── Processors ───────────────────────────────────────────────────────────────
+processors:
+  enum:
+    enable: false         # resolve integer OID values to labels
+  counter:
+    delta_enable: true    # compute per-interval deltas for Counter32/64
+    purge_interval: 5m    # how often stale counter state is garbage-collected
+
+# ── Output format ─────────────────────────────────────────────────────────────
+format:
+  pretty: false           # indent JSON output (useful for debugging)
+
+# ── Config management ─────────────────────────────────────────────────────────
+config_reload_interval: 0s  # re-scan data directories on interval; 0 = disabled
+
+# Override the SNMP data directory paths.
+# When a field is empty the corresponding environment variable is used instead.
+config_paths:
+  devices: ""        # INPUT_SNMP_DEVICE_DEFINITIONS_DIRECTORY_PATH
+  device_groups: ""  # INPUT_SNMP_DEVICE_GROUP_DEFINITIONS_DIRECTORY_PATH
+  object_groups: ""  # INPUT_SNMP_OBJECT_GROUP_DEFINITIONS_DIRECTORY_PATH
+  objects: ""        # INPUT_SNMP_OBJECT_DEFINITIONS_DIRECTORY_PATH
+  enums: ""          # PROCESSOR_SNMP_ENUM_DEFINITIONS_DIRECTORY_PATH
+
+# ── Health check ──────────────────────────────────────────────────────────────
+health:
+  addr: ""            # e.g. ":8080"; empty disables the /health endpoint
+
+# ── Output transport ──────────────────────────────────────────────────────────
+# Set enabled: true on exactly one block. The others must have enabled: false.
+# Default (all false or stdout enabled): write to stdout.
+output:
+
+  # ── Stdout ─────────────────────────────────────────────────────────────────
+  stdout:
+    enabled: true          # write JSON metrics to stdout
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  kafka:
+    enabled: false
+    brokers: []                  # e.g. ["broker1:9092", "broker2:9092"]
+    topic: ""                    # target Kafka topic
+    max_events: 1000             # flush when batch reaches this many messages
+    flush_interval: 5s           # flush stale batches after this duration
+    buffer_size: 10000           # internal channel capacity (back-pressure point)
+    client_id: snmp-collector    # Kafka client identifier sent to brokers
+    required_acks: local         # none | local | all
+    max_retry: 3                 # sarama-level send retries on transient errors
+    compression: none            # none | gzip | snappy | lz4 | zstd
+    version: ""                  # Kafka protocol version, e.g. "3.6.0"; empty = auto
+
+    tls:
+      enable: false
+      insecure_skip_verify: false  # never true in production
+      ca_cert: ""                  # path to PEM CA certificate
+      client_cert: ""              # path to PEM client certificate (mTLS)
+      client_key: ""               # path to PEM client key (mTLS)
+
+    sasl:
+      enable: false
+      user: ""
+      password: ""
+      mechanism: PLAIN  # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
+
+  # ── File ───────────────────────────────────────────────────────────────────
+  file:
+    enabled: false
+    path: ""               # e.g. /var/log/snmpcollector/metrics.json
+    max_bytes: 52428800    # rotate when file exceeds this size (default: 50 MB)
+    max_backups: 5         # number of rotated files to keep (0 = keep all)

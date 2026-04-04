@@ -1,0 +1,86 @@
+# Sample collector configuration for local testing.
+# Points config_paths at the sibling testdata directories so the binary
+# can be run from the repo root without any environment variables:
+#
+#   snmpcollector -config testdata/collector_config.yml
+
+log:
+  level: info
+  format: text
+
+collector_id: "dev-collector-01"
+
+pipeline:
+  buffer_size: 1000
+  decode_workers: 1
+  produce_workers: 1
+
+poller:
+  workers: 50
+  pool:
+    max_idle: 2
+    idle_timeout: 30s
+
+processors:
+  enum:
+    enable: true
+  counter:
+    delta_enable: true
+    purge_interval: 5m
+
+format:
+  pretty: true
+
+config_reload_interval: 0s
+
+config_paths:
+  devices:       testdata/devices
+  device_groups: testdata/device_groups
+  object_groups: testdata/object_groups
+  objects:       testdata/objects
+  enums:         testdata/enums
+
+health:
+  addr: ":9080"
+
+output:
+  # Set enabled: true on exactly one block. The others must have enabled: false.
+  # Default (all false or stdout enabled): write to stdout.
+
+  # ── Stdout output ──────────────────────────────────────────────────────────
+  stdout:
+    enabled: false
+
+  # ── File output ────────────────────────────────────────────────────────────
+  file:
+    enabled: true
+    path: "snmp-metrics.json"              # e.g. /tmp/snmp-metrics.json
+    max_bytes: 10485760   # 10 MB
+    max_backups: 3
+
+  # ── Kafka output ───────────────────────────────────────────────────────────
+  kafka:
+    enabled: false
+    brokers: []           # e.g. ["localhost:9092"]
+    topic: snmp-metrics
+    max_events: 100
+    flush_interval: 5s
+    buffer_size: 1000
+    client_id: snmp-collector-dev
+    required_acks: local  # none | local | all
+    max_retry: 3
+    compression: none     # none | gzip | snappy | lz4 | zstd
+    version: ""
+
+    tls:
+      enable: false
+      insecure_skip_verify: false
+      ca_cert: ""
+      client_cert: ""
+      client_key: ""
+
+    sasl:
+      enable: false
+      user: ""
+      password: ""
+      mechanism: PLAIN    # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
