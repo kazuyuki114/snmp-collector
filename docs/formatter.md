@@ -140,7 +140,7 @@ struct tags on the model types in `models/metric.go`.
 
 ```go
 import (
-    fmtjson "github.com/vpbank/snmp_collector/format/json"
+    fmtjson "github.com/snmp/snmp_collector/format/json"
     "log/slog"
 )
 

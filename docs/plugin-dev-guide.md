@@ -8,22 +8,39 @@ plugin is a self-contained Go package that satisfies a small interface.
 
 ## Table of Contents
 
-1. [Architecture Overview](#architecture-overview)
-2. [Writing a New Input Plugin](#writing-a-new-input-plugin)
-   - [Interface](#input-interface)
-   - [Package Layout](#input-package-layout)
-   - [Step-by-Step](#input-step-by-step)
-   - [Full Example: SNMP Trap Receiver](#example-snmp-trap-input)
-   - [Testing](#input-testing)
-3. [Writing a New Transport Plugin](#writing-a-new-transport-plugin)
-   - [Interface](#transport-interface)
-   - [Package Layout](#transport-package-layout)
-   - [Step-by-Step](#transport-step-by-step)
-   - [Full Example: Kafka Transport](#example-kafka-transport)
-   - [Testing](#transport-testing)
-4. [Registering Plugins with the Engine](#registering-plugins)
-5. [Design Rules](#design-rules)
-6. [Existing Plugins Reference](#existing-plugins)
+- [Writing New Plugins — Developer Guide](#writing-new-plugins--developer-guide)
+  - [Table of Contents](#table-of-contents)
+  - [Architecture Overview](#architecture-overview)
+  - [Writing a New Input Plugin](#writing-a-new-input-plugin)
+    - [Input Interface](#input-interface)
+    - [Input Package Layout](#input-package-layout)
+    - [Input Step-by-Step](#input-step-by-step)
+      - [1. Create the package](#1-create-the-package)
+      - [2. Define Config and the Input struct](#2-define-config-and-the-input-struct)
+      - [3. Implement Name()](#3-implement-name)
+      - [4. Implement Start()](#4-implement-start)
+      - [5. Emit Envelopes](#5-emit-envelopes)
+      - [6. Implement Stop()](#6-implement-stop)
+    - [Example: SNMP Trap Input](#example-snmp-trap-input)
+    - [Input Testing](#input-testing)
+  - [Writing a New Transport Plugin](#writing-a-new-transport-plugin)
+    - [Transport Interface](#transport-interface)
+    - [Transport Package Layout](#transport-package-layout)
+    - [Transport Step-by-Step](#transport-step-by-step)
+      - [1. Create the package](#1-create-the-package-1)
+      - [2. Define Config and the Transport struct](#2-define-config-and-the-transport-struct)
+      - [3. Implement Name()](#3-implement-name-1)
+      - [4. Implement Send()](#4-implement-send)
+      - [5. Implement Close()](#5-implement-close)
+    - [Example: Kafka Transport](#example-kafka-transport)
+    - [Transport Testing](#transport-testing)
+  - [Registering Plugins with the Engine](#registering-plugins-with-the-engine)
+  - [Design Rules](#design-rules)
+    - [Dependency graph](#dependency-graph)
+  - [Existing Plugins Reference](#existing-plugins-reference)
+    - [Input: SNMP Poller (`plugin/input/snmppoller/`)](#input-snmp-poller-plugininputsnmppoller)
+    - [Transport: Stdout (`plugin/transport/stdout/`)](#transport-stdout-plugintransportstdout)
+    - [Transport: File (`plugin/transport/file/`)](#transport-file-plugintransportfile)
 
 ---
 
@@ -93,7 +110,7 @@ import (
     "log/slog"
     "sync"
 
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 // compile-time interface check.
@@ -228,8 +245,8 @@ import (
     "time"
 
     "github.com/gosnmp/gosnmp"
-    "github.com/vpbank/snmp_collector/models"
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/models"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 var _ plugin.Input = (*Input)(nil)
@@ -335,8 +352,8 @@ import (
     "testing"
     "time"
 
-    "github.com/vpbank/snmp_collector/models"
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/models"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 func TestInput_ImplementsInterface(t *testing.T) {
@@ -415,7 +432,7 @@ import (
     "log/slog"
     "sync"
 
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 var _ plugin.Transport = (*Transport)(nil)
@@ -499,7 +516,7 @@ import (
     "log/slog"
     "sync"
 
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 var _ plugin.Transport = (*Transport)(nil)
@@ -607,7 +624,7 @@ package kafka
 import (
     "testing"
 
-    "github.com/vpbank/snmp_collector/plugin"
+    "github.com/snmp/snmp_collector/plugin"
 )
 
 func TestTransport_ImplementsInterface(t *testing.T) {
@@ -676,12 +693,12 @@ the engine is constructed):
 
 ```go
 import (
-    "github.com/vpbank/snmp_collector/plugin/engine"
-    "github.com/vpbank/snmp_collector/plugin/input/snmppoller"
-    "github.com/vpbank/snmp_collector/plugin/input/snmptrap"
-    "github.com/vpbank/snmp_collector/plugin/transport/stdout"
-    "github.com/vpbank/snmp_collector/plugin/transport/file"
-    "github.com/vpbank/snmp_collector/plugin/transport/kafka"
+    "github.com/snmp/snmp_collector/plugin/engine"
+    "github.com/snmp/snmp_collector/plugin/input/snmppoller"
+    "github.com/snmp/snmp_collector/plugin/input/snmptrap"
+    "github.com/snmp/snmp_collector/plugin/transport/stdout"
+    "github.com/snmp/snmp_collector/plugin/transport/file"
+    "github.com/snmp/snmp_collector/plugin/transport/kafka"
 )
 
 func buildEngine(logger *slog.Logger) (*engine.Engine, error) {

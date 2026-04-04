@@ -8,7 +8,7 @@
 //
 //	snmpcollector [flags]
 //
-// See snmp-collector-architecture.md §Command-Line Configuration for the full
+// See ezSNMP-Archi.md §Command-Line Configuration for the full
 // flag reference.
 package main
 
