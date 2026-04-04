@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/plugin"
 )
 
@@ -49,7 +50,7 @@ func New(cfg Config, logger *slog.Logger) (*Transport, error) {
 		return nil, fmt.Errorf("file transport: FilePath is required")
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	nl := cfg.Newline
 	if nl == "" {
@@ -114,7 +115,3 @@ func (t *Transport) Close() error {
 	return nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }

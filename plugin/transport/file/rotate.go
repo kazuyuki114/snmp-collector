@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"snmp/snmp-collector/internal/noop"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ func NewRotatingFile(cfg RotateConfig, logger *slog.Logger) (*RotatingFile, erro
 		return nil, fmt.Errorf("file transport: rotate: FilePath is required")
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 
 	// Ensure parent directory exists.

@@ -1,12 +1,14 @@
 package scheduler
 
 import (
+	"container/heap"
 	"context"
 	"log/slog"
-	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/pkg/snmpcollector/poller"
 )
@@ -23,7 +25,7 @@ type JobSubmitter interface {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scheduler
+// entry + min-heap
 // ─────────────────────────────────────────────────────────────────────────────
 
 // entry tracks the next-fire time for a single device and its pre-resolved jobs.
@@ -34,6 +36,26 @@ type entry struct {
 	jobs     []poller.PollJob
 }
 
+// entryHeap implements heap.Interface for min-heap ordering by nextRun.
+// The heap invariant means entries[0] is always the next entry to fire.
+type entryHeap []entry
+
+func (h entryHeap) Len() int           { return len(h) }
+func (h entryHeap) Less(i, j int) bool { return h[i].nextRun.Before(h[j].nextRun) }
+func (h entryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *entryHeap) Push(x any)        { *h = append(*h, x.(entry)) }
+func (h *entryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scheduler
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Scheduler dispatches PollJob values into a JobSubmitter at each device's
 // configured PollInterval.
 type Scheduler struct {
@@ -41,7 +63,9 @@ type Scheduler struct {
 	logger *slog.Logger
 
 	mu      sync.Mutex
-	entries []entry
+	entries entryHeap
+
+	dropped atomic.Int64 // cumulative count of jobs dropped due to full queue
 
 	done chan struct{}
 }
@@ -50,7 +74,7 @@ type Scheduler struct {
 // Start to begin dispatching.
 func New(cfg *config.LoadedConfig, pool JobSubmitter, logger *slog.Logger) *Scheduler {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	s := &Scheduler{
 		pool:   pool,
@@ -67,7 +91,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 	for {
 		s.mu.Lock()
-		if len(s.entries) == 0 {
+		if s.entries.Len() == 0 {
 			s.mu.Unlock()
 			// Nothing to schedule — wait for context cancellation or a Reload.
 			select {
@@ -78,10 +102,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 			}
 		}
 
-		// Sort by next run time.
-		sort.Slice(s.entries, func(i, j int) bool {
-			return s.entries[i].nextRun.Before(s.entries[j].nextRun)
-		})
+		// Heap min is always at index 0 — no sort needed.
 		next := s.entries[0].nextRun
 		s.mu.Unlock()
 
@@ -100,12 +121,14 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 		now := time.Now()
 		s.mu.Lock()
-		for i := range s.entries {
-			if s.entries[i].nextRun.After(now) {
-				break
-			}
-			s.fireEntry(&s.entries[i])
-			s.entries[i].nextRun = now.Add(s.entries[i].interval)
+		// Pop and re-push all entries that are due. The heap invariant keeps
+		// entries[0] as the minimum, so we stop as soon as the next entry is
+		// in the future. This is O(k log n) for k due entries.
+		for s.entries.Len() > 0 && !s.entries[0].nextRun.After(now) {
+			e := heap.Pop(&s.entries).(entry)
+			s.fireEntry(&e)
+			e.nextRun = now.Add(e.interval)
+			heap.Push(&s.entries, e)
 		}
 		s.mu.Unlock()
 	}
@@ -121,31 +144,38 @@ func (s *Scheduler) Stop() {
 // immediately; removed devices stop; changed intervals take effect on the
 // next cycle.
 func (s *Scheduler) Reload(cfg *config.LoadedConfig) {
-	newEntries := s.buildEntries(cfg)
+	h := s.buildEntries(cfg)
 	s.mu.Lock()
-	s.entries = newEntries
+	s.entries = h
 	s.mu.Unlock()
-	s.logger.Info("scheduler: config reloaded", "devices", len(newEntries))
+	s.logger.Info("scheduler: config reloaded", "devices", h.Len())
 }
 
 // Entries returns the number of active entries (for monitoring / tests).
 func (s *Scheduler) Entries() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.entries)
+	return s.entries.Len()
+}
+
+// DroppedJobs returns the cumulative number of jobs dropped because the worker
+// pool queue was full at submission time.
+func (s *Scheduler) DroppedJobs() int64 {
+	return s.dropped.Load()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// buildEntries resolves the config hierarchy and creates one entry per device.
-func (s *Scheduler) buildEntries(cfg *config.LoadedConfig) []entry {
+// buildEntries resolves the config hierarchy and creates a min-heap of entries,
+// one per device, each scheduled to fire immediately.
+func (s *Scheduler) buildEntries(cfg *config.LoadedConfig) entryHeap {
 	allJobs := ResolveJobs(cfg, s.logger)
 	byHost := jobsByHostname(allJobs)
 
 	now := time.Now()
-	entries := make([]entry, 0, len(byHost))
+	h := make(entryHeap, 0, len(byHost))
 	for hostname, jobs := range byHost {
 		if len(jobs) == 0 {
 			continue
@@ -154,23 +184,27 @@ func (s *Scheduler) buildEntries(cfg *config.LoadedConfig) []entry {
 		if interval <= 0 {
 			interval = 60 * time.Second
 		}
-		entries = append(entries, entry{
+		h = append(h, entry{
 			hostname: hostname,
 			interval: interval,
 			nextRun:  now, // Poll immediately on start / reload.
 			jobs:     jobs,
 		})
 	}
-	return entries
+	heap.Init(&h)
+	return h
 }
 
 // fireEntry dispatches all jobs for one entry using TrySubmit (non-blocking).
+// Dropped jobs are counted in s.dropped.
 func (s *Scheduler) fireEntry(e *entry) {
 	for _, job := range e.jobs {
 		if !s.pool.TrySubmit(job) {
+			s.dropped.Add(1)
 			s.logger.Warn("scheduler: job queue full, dropping job",
 				"hostname", e.hostname,
 				"object", job.ObjectDef.Key,
+				"total_dropped", s.dropped.Load(),
 			)
 		}
 	}
@@ -179,11 +213,3 @@ func (s *Scheduler) fireEntry(e *entry) {
 		"count", len(e.jobs),
 	)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// noopWriter — discard log output when no logger is provided
-// ─────────────────────────────────────────────────────────────────────────────
-
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }

@@ -2,14 +2,18 @@ package poller
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/gosnmp/gosnmp"
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 )
+
+// ErrPoolClosed is returned by Get when the pool has already been shut down.
+var ErrPoolClosed = errors.New("connection pool closed")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration
@@ -75,7 +79,7 @@ type ConnectionPool struct {
 func NewConnectionPool(opts PoolOptions, logger *slog.Logger) *ConnectionPool {
 	opts.defaults()
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	return &ConnectionPool{
 		opts:   opts,
@@ -94,7 +98,7 @@ func (p *ConnectionPool) Get(ctx context.Context, hostname string, cfg config.De
 	// Fast path: reject immediately if the pool is closed.
 	select {
 	case <-p.closed:
-		return nil, fmt.Errorf("pool closed")
+		return nil, ErrPoolClosed
 	default:
 	}
 
@@ -104,7 +108,7 @@ func (p *ConnectionPool) Get(ctx context.Context, hostname string, cfg config.De
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-p.closed:
-		return nil, fmt.Errorf("pool closed")
+		return nil, ErrPoolClosed
 	}
 
 	// Try to reuse an idle connection.
@@ -243,7 +247,3 @@ func (p *ConnectionPool) popIdle(dp *devicePool) *gosnmp.GoSNMP {
 	return nil
 }
 
-// noopWriter discards log output.
-type noopWriter struct{}
-
-func (noopWriter) Write(b []byte) (int, error) { return len(b), nil }

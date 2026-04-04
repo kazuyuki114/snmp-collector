@@ -12,6 +12,7 @@ import (
 	"os"
 	"sync"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/plugin"
 )
 
@@ -40,7 +41,7 @@ type Config struct {
 // New constructs a Stdout Transport.
 func New(cfg Config, logger *slog.Logger) *Transport {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	w := cfg.Writer
 	if w == nil {
@@ -83,7 +84,3 @@ func (t *Transport) Send(data []byte) error {
 // by this transport.
 func (t *Transport) Close() error { return nil }
 
-// ─────────────────────────────────────────────────────────────────────────────
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }

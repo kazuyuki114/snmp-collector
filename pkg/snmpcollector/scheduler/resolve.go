@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/pkg/snmpcollector/poller"
@@ -21,7 +22,7 @@ func ResolveJobs(cfg *config.LoadedConfig, logger *slog.Logger) []poller.PollJob
 		return nil
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 
 	// Sort hostnames for deterministic output (helps testing + debugging).

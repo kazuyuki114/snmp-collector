@@ -137,11 +137,11 @@ func TestStartStop_lifecycle(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	a := New(Config{
-		ConfigPaths:     paths,
-		PollerWorkers:   2,
-		BufferSize:      100,
-		PrettyPrint:     false,
-		TransportWriter: &buf,
+		ConfigPaths:   paths,
+		PollerWorkers: 2,
+		BufferSize:    100,
+		PrettyPrint:   false,
+		Transport:     newWriterTransport(&buf, logger),
 	}, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -195,10 +195,10 @@ func TestPipelineIntegration_metricsFlowToTransport(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	a := New(Config{
-		ConfigPaths:     paths,
-		PollerWorkers:   1,
-		BufferSize:      100,
-		TransportWriter: &buf,
+		ConfigPaths:   paths,
+		PollerWorkers: 1,
+		BufferSize:    100,
+		Transport:     newWriterTransport(&buf, logger),
 	}, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())

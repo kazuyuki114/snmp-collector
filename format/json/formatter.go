@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
 )
 
@@ -62,7 +63,7 @@ type JSONFormatter struct {
 // substituted so the formatter never panics on a nil receiver.
 func New(cfg Config, logger *slog.Logger) *JSONFormatter {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	if cfg.PrettyPrint && cfg.Indent == "" {
 		cfg.Indent = "  "
@@ -117,11 +118,3 @@ func (f *JSONFormatter) Format(metric *models.SNMPMetric) ([]byte, error) {
 	return data, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// no-op logger writer
-// ─────────────────────────────────────────────────────────────────────────────
-
-// noopWriter discards all log output when no logger is provided.
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }

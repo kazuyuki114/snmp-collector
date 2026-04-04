@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"log/slog"
+	"time"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/snmp/decoder"
 )
@@ -62,7 +64,7 @@ type MetricsProducer struct {
 // instance matching -log.fmt=json. Pass nil for a no-op logger.
 func New(cfg Config, logger *slog.Logger) *MetricsProducer {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopProducerWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 
 	var cs *CounterState
@@ -75,6 +77,16 @@ func New(cfg Config, logger *slog.Logger) *MetricsProducer {
 		counters: cs,
 		logger:   logger,
 	}
+}
+
+// PurgeCounters removes counter entries that have not been observed for longer
+// than maxAge. Call this on a slow timer to reclaim memory for devices that
+// have been removed from the inventory. Returns the number of entries removed.
+func (p *MetricsProducer) PurgeCounters(maxAge time.Duration) int {
+	if p.counters == nil {
+		return 0
+	}
+	return p.counters.Purge(maxAge, time.Now())
 }
 
 // Produce implements Producer.
@@ -107,10 +119,3 @@ func (p *MetricsProducer) Produce(decoded decoder.DecodedPollResult) (models.SNM
 	return result, nil
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// noopProducerWriter — discards log output when no logger is provided
-// ─────────────────────────────────────────────────────────────────────────────
-
-type noopProducerWriter struct{}
-
-func (noopProducerWriter) Write(p []byte) (int, error) { return len(p), nil }

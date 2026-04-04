@@ -3,8 +3,8 @@
 //
 // Pipeline:
 //
-//	Scheduler → WorkerPool → [rawCh] → Decoder → [decodedCh] →
-//	Producer → [metricCh] → Formatter → [formattedCh] → Transport
+//	Scheduler → WorkerPool → [rawCh] → Decoder (N) → [decodedCh] →
+//	Producer (N) → [metricCh] → Formatter → [formattedCh] → Transport
 package app
 
 import (
@@ -14,12 +14,15 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	jsonformat "snmp/snmp-collector/format/json"
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/pkg/snmpcollector/poller"
 	"snmp/snmp-collector/pkg/snmpcollector/scheduler"
+	"snmp/snmp-collector/plugin"
 	"snmp/snmp-collector/producer/metrics"
 	"snmp/snmp-collector/snmp/decoder"
 )
@@ -59,8 +62,27 @@ type Config struct {
 	// PrettyPrint enables indented JSON output.
 	PrettyPrint bool
 
-	// TransportWriter is the io.Writer for file transport. nil = os.Stdout.
-	TransportWriter io.Writer
+	// Transport is the output destination. It must implement plugin.Transport.
+	// nil defaults to a stdout transport.
+	Transport plugin.Transport
+
+	// DecodeWorkers is the number of parallel decode-stage goroutines.
+	// Default: 1.
+	DecodeWorkers int
+
+	// ProduceWorkers is the number of parallel produce-stage goroutines.
+	// Default: 1.
+	ProduceWorkers int
+
+	// CounterPurgeInterval controls how often stale counter entries are
+	// garbage-collected. 0 disables automatic purging.
+	// Default: 5 minutes.
+	CounterPurgeInterval time.Duration
+
+	// ConfigReloadInterval, when > 0, re-reads all YAML configuration
+	// directories and updates the scheduler at this interval. 0 disables
+	// automatic reload.
+	ConfigReloadInterval time.Duration
 }
 
 func (c *Config) withDefaults() {
@@ -76,6 +98,15 @@ func (c *Config) withDefaults() {
 	}
 	if c.BufferSize <= 0 {
 		c.BufferSize = 10_000
+	}
+	if c.DecodeWorkers <= 0 {
+		c.DecodeWorkers = 1
+	}
+	if c.ProduceWorkers <= 0 {
+		c.ProduceWorkers = 1
+	}
+	if c.CounterPurgeInterval == 0 {
+		c.CounterPurgeInterval = 5 * time.Minute
 	}
 }
 
@@ -99,8 +130,8 @@ type App struct {
 	sched      *scheduler.Scheduler
 	dec        *decoder.SNMPDecoder
 	prod       *metrics.MetricsProducer
-	formatter  *jsonformat.JSONFormatter
-	transport  *writerTransport
+	formatter  jsonformat.Formatter
+	transport  plugin.Transport
 
 	// Inter-stage channels.
 	rawCh       chan decoder.RawPollResult
@@ -116,7 +147,7 @@ type App struct {
 // New constructs an App. It does not start anything — call Start for that.
 func New(cfg Config, logger *slog.Logger) *App {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	cfg.withDefaults()
 	return &App{
@@ -150,8 +181,12 @@ func (a *App) Start(ctx context.Context) error {
 	a.metricCh = make(chan models.SNMPMetric, a.cfg.BufferSize)
 	a.formattedCh = make(chan []byte, a.cfg.BufferSize)
 
-	// ── 3. Build pipeline components (reverse order: transport → decoder) ──
-	a.transport = newWriterTransport(a.cfg.TransportWriter, a.logger)
+	// ── 3. Build pipeline components (transport first so it is ready) ───
+	if a.cfg.Transport != nil {
+		a.transport = a.cfg.Transport
+	} else {
+		a.transport = newWriterTransport(os.Stdout, a.logger)
+	}
 
 	a.formatter = jsonformat.New(jsonformat.Config{
 		PrettyPrint: a.cfg.PrettyPrint,
@@ -182,7 +217,15 @@ func (a *App) Start(ctx context.Context) error {
 	a.startProduceStage(pipeCtx)
 	a.startDecodeStage(pipeCtx)
 
-	// ── 6. Start poller path ────────────────────────────────────────────
+	// ── 6. Start optional background maintenance goroutines ─────────────
+	if a.cfg.ConfigReloadInterval > 0 {
+		a.startConfigReloader(pipeCtx)
+	}
+	if a.cfg.CounterPurgeInterval > 0 {
+		a.startCounterPurger(pipeCtx)
+	}
+
+	// ── 7. Start poller path ────────────────────────────────────────────
 	a.workerPool.Start(pipeCtx)
 
 	// Scheduler blocks in its own goroutine.
@@ -195,6 +238,8 @@ func (a *App) Start(ctx context.Context) error {
 
 	a.logger.Info("app: pipeline running",
 		"poller_workers", a.cfg.PollerWorkers,
+		"decode_workers", a.cfg.DecodeWorkers,
+		"produce_workers", a.cfg.ProduceWorkers,
 		"buffer_size", a.cfg.BufferSize,
 	)
 	return nil
@@ -259,10 +304,6 @@ func (a *App) Reload() error {
 		return fmt.Errorf("app: reload config: %w", err)
 	}
 
-	// Update producer enum registry if enums changed.
-	// (producer.MetricsProducer is rebuilt on the next Produce call automatically
-	// via its config.Enums field — but the producer is immutable, so we just
-	// update the scheduler which controls what gets polled.)
 	a.sched.Reload(newCfg)
 	a.loadedCfg = newCfg
 
@@ -277,56 +318,77 @@ func (a *App) Reload() error {
 // Pipeline stage goroutines
 // ─────────────────────────────────────────────────────────────────────────────
 
-// startDecodeStage reads RawPollResult from rawCh, decodes each into a
-// DecodedPollResult, and sends it to decodedCh. When rawCh is closed (shutdown)
-// it closes decodedCh to cascade the shutdown downstream.
+// startDecodeStage launches DecodeWorkers goroutines that each read
+// RawPollResult from rawCh and write DecodedPollResult to decodedCh.
+// A coordinator goroutine closes decodedCh once all workers have exited.
 func (a *App) startDecodeStage(_ context.Context) {
+	var stageWg sync.WaitGroup
+	for range a.cfg.DecodeWorkers {
+		stageWg.Add(1)
+		a.wg.Add(1)
+		go func() {
+			defer stageWg.Done()
+			defer a.wg.Done()
+			for raw := range a.rawCh {
+				decoded, err := a.dec.Decode(raw)
+				if err != nil {
+					a.logger.Warn("app: decode error",
+						"device", raw.Device.Hostname,
+						"object", raw.ObjectDef.Key,
+						"error", err.Error(),
+					)
+					continue
+				}
+				if len(decoded.Varbinds) == 0 {
+					continue
+				}
+				a.decodedCh <- decoded
+			}
+		}()
+	}
+	// Closer: waits for all decode workers then cascades shutdown downstream.
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
-		defer close(a.decodedCh)
-
-		for raw := range a.rawCh {
-			decoded, err := a.dec.Decode(raw)
-			if err != nil {
-				a.logger.Warn("app: decode error",
-					"device", raw.Device.Hostname,
-					"object", raw.ObjectDef.Key,
-					"error", err.Error(),
-				)
-				continue
-			}
-			if len(decoded.Varbinds) == 0 {
-				continue
-			}
-			a.decodedCh <- decoded
-		}
+		stageWg.Wait()
+		close(a.decodedCh)
 	}()
 }
 
-// startProduceStage reads DecodedPollResult from decodedCh, produces an
-// SNMPMetric, and sends it to metricCh. Closes metricCh when done.
+// startProduceStage launches ProduceWorkers goroutines that each read
+// DecodedPollResult from decodedCh and write SNMPMetric to metricCh.
+// A coordinator goroutine closes metricCh once all workers have exited.
 func (a *App) startProduceStage(_ context.Context) {
+	var stageWg sync.WaitGroup
+	for range a.cfg.ProduceWorkers {
+		stageWg.Add(1)
+		a.wg.Add(1)
+		go func() {
+			defer stageWg.Done()
+			defer a.wg.Done()
+			for decoded := range a.decodedCh {
+				metric, err := a.prod.Produce(decoded)
+				if err != nil {
+					a.logger.Warn("app: produce error",
+						"device", decoded.Device.Hostname,
+						"object", decoded.ObjectDefKey,
+						"error", err.Error(),
+					)
+					continue
+				}
+				if len(metric.Metrics) == 0 {
+					continue
+				}
+				a.metricCh <- metric
+			}
+		}()
+	}
+	// Closer: waits for all produce workers then cascades shutdown downstream.
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
-		defer close(a.metricCh)
-
-		for decoded := range a.decodedCh {
-			metric, err := a.prod.Produce(decoded)
-			if err != nil {
-				a.logger.Warn("app: produce error",
-					"device", decoded.Device.Hostname,
-					"object", decoded.ObjectDefKey,
-					"error", err.Error(),
-				)
-				continue
-			}
-			if len(metric.Metrics) == 0 {
-				continue
-			}
-			a.metricCh <- metric
-		}
+		stageWg.Wait()
+		close(a.metricCh)
 	}()
 }
 
@@ -371,17 +433,64 @@ func (a *App) startTransportStage(_ context.Context) {
 	}()
 }
 
+// startConfigReloader launches a goroutine that calls Reload on every tick of
+// cfg.ConfigReloadInterval. It stops when ctx is cancelled.
+func (a *App) startConfigReloader(ctx context.Context) {
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		ticker := time.NewTicker(a.cfg.ConfigReloadInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := a.Reload(); err != nil {
+					a.logger.Error("app: scheduled config reload failed", "error", err.Error())
+				}
+			}
+		}
+	}()
+	a.logger.Info("app: automatic config reload enabled",
+		"interval", a.cfg.ConfigReloadInterval,
+	)
+}
+
+// startCounterPurger launches a goroutine that periodically removes stale
+// counter entries from the producer's CounterState to prevent unbounded memory
+// growth in long-running deployments.
+func (a *App) startCounterPurger(ctx context.Context) {
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		ticker := time.NewTicker(a.cfg.CounterPurgeInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Entries not seen for 3× the purge interval are considered stale.
+				maxAge := 3 * a.cfg.CounterPurgeInterval
+				if n := a.prod.PurgeCounters(maxAge); n > 0 {
+					a.logger.Info("app: purged stale counter entries",
+						"removed", n,
+						"max_age", maxAge,
+					)
+				}
+			}
+		}
+	}()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Utilities
+// Default transport
 // ─────────────────────────────────────────────────────────────────────────────
 
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }
-
-// writerTransport is a minimal inline transport that writes each message
-// followed by a newline to an io.Writer (default: os.Stdout).  It keeps
-// app.go self-contained — no dependency on transport/file or plugin packages.
+// writerTransport is the default plugin.Transport used when no Transport is
+// provided in Config. It writes each message followed by a newline to an
+// io.Writer (default: os.Stdout).
 type writerTransport struct {
 	mu     sync.Mutex
 	w      io.Writer
@@ -399,6 +508,8 @@ func newWriterTransport(w io.Writer, logger *slog.Logger) *writerTransport {
 		logger: logger,
 	}
 }
+
+func (t *writerTransport) Name() string { return "stdout" }
 
 func (t *writerTransport) Send(data []byte) error {
 	t.mu.Lock()

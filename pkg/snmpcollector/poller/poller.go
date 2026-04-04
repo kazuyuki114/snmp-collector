@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/snmp/decoder"
@@ -54,7 +55,7 @@ type SNMPPoller struct {
 // NewSNMPPoller creates a new poller that obtains sessions from pool.
 func NewSNMPPoller(pool *ConnectionPool, logger *slog.Logger) *SNMPPoller {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	return &SNMPPoller{pool: pool, logger: logger}
 }
@@ -76,6 +77,10 @@ func (p *SNMPPoller) Poll(ctx context.Context, job PollJob) (decoder.RawPollResu
 	result.Device = job.Device
 	result.ObjectDef = job.ObjectDef
 
+	// Wire context so cancellation and deadlines propagate into gosnmp's
+	// marshal loop (checked on every PDU send in marshal.go).
+	conn.Context = ctx
+
 	var pdus []gosnmp.SnmpPDU
 	result.PollStartedAt = time.Now()
 
@@ -88,6 +93,10 @@ func (p *SNMPPoller) Poll(ctx context.Context, job PollJob) (decoder.RawPollResu
 	}
 	result.CollectedAt = time.Now()
 	result.Varbinds = pdus
+
+	// Reset context before returning the connection to the pool so the next
+	// caller does not inherit a cancelled or deadline-exceeded context.
+	conn.Context = context.Background()
 
 	if err != nil {
 		// Connection might be broken — discard it.

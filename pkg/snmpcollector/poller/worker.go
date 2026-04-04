@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/snmp/decoder"
 )
 
@@ -31,7 +32,7 @@ func NewWorkerPool(numWorkers int, poller Poller, output chan<- decoder.RawPollR
 		numWorkers = 100
 	}
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(noopWriter{}, nil))
+		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
 	}
 	return &WorkerPool{
 		numWorkers: numWorkers,
