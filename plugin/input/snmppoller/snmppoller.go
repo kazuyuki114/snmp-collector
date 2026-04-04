@@ -19,12 +19,12 @@ import (
 	"os"
 	"sync"
 
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/poller"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/scheduler"
-	"github.com/kazuyuki114/ezSNMP/plugin"
-	"github.com/kazuyuki114/ezSNMP/producer/metrics"
-	"github.com/kazuyuki114/ezSNMP/snmp/decoder"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
+	"snmp/snmp-collector/pkg/snmpcollector/poller"
+	"snmp/snmp-collector/pkg/snmpcollector/scheduler"
+	"snmp/snmp-collector/plugin"
+	"snmp/snmp-collector/producer/metrics"
+	"snmp/snmp-collector/snmp/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

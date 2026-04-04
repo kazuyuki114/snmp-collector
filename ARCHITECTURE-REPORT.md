@@ -1,4 +1,4 @@
-# ezSNMP — Comprehensive Architecture Report
+# SNMP — Comprehensive Architecture Report
 
 > Generated from full codebase audit of all Go source files (25+), test files (3), YAML configs, documentation, and `metrics.json` output.
 
@@ -23,7 +23,7 @@
 
 ## 1. Module & Dependencies
 
-**Module:** `github.com/kazuyuki114/ezSNMP`  
+**Module:** `github.com/kazuyuki114/snmp`  
 **Go version:** 1.25.7
 
 | Dependency | Version | Purpose |
@@ -38,7 +38,7 @@ The project has **zero framework dependencies** — only gosnmp for SNMP protoco
 ## 2. Package Map
 
 ```
-github.com/kazuyuki114/ezSNMP
+github.com/kazuyuki114/snmp
 ├── cmd/snmpcollector/          # CLI entry point binary
 ├── models/                     # Shared data contracts (zero internal imports)
 │   ├── config.go               #   ObjectDefinition, AttributeDefinition, etc.
@@ -212,7 +212,7 @@ The collector implements a **6-stage concurrent pipeline** connected by buffered
 
 ```
                     ┌─────────────────────────────────────────────────────────────────┐
-                    │                          ezSNMP Pipeline                        │
+                    │                          snmp Pipeline                        │
                     │                                                                  │
  YAML Config ──▶   │  [1] Scheduler  ──▶  [2] WorkerPool/Poller  ──▶  [rawCh]       │
  (5 dirs)          │       │ PollJobs        │ gosnmp Get/Walk        │               │
@@ -600,7 +600,7 @@ The docs reference 14 poller tests and 16 scheduler tests, but the corresponding
 
 ## 11. Implemented vs. Planned (Architecture Spec Comparison)
 
-Comparing `ezSNMP-Architecture.md` (the original spec) against actual code:
+Comparing `snmp-Architecture.md` (the original spec) against actual code:
 
 ### Fully Implemented
 
@@ -739,7 +739,7 @@ The sample output demonstrates collection of: SNMP statistics, SNMPv3 engine, sy
 
 ## Summary
 
-**ezSNMP** is a production-quality SNMP polling collector with:
+**snmp** is a production-quality SNMP polling collector with:
 - A clean 6-stage pipeline (Scheduler → Poller → Decoder → Producer → Formatter → Transport)
 - A Telegraf-style plugin system with Input and Transport interfaces
 - Comprehensive SNMP v1/v2c/v3 support via gosnmp

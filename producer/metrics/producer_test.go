@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/producer/metrics"
-	"github.com/kazuyuki114/ezSNMP/snmp/decoder"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/producer/metrics"
+	"snmp/snmp-collector/snmp/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

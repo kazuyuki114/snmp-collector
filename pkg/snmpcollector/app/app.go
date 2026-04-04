@@ -15,13 +15,13 @@ import (
 	"os"
 	"sync"
 
-	jsonformat "github.com/kazuyuki114/ezSNMP/format/json"
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/poller"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/scheduler"
-	"github.com/kazuyuki114/ezSNMP/producer/metrics"
-	"github.com/kazuyuki114/ezSNMP/snmp/decoder"
+	jsonformat "snmp/snmp-collector/format/json"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
+	"snmp/snmp-collector/pkg/snmpcollector/poller"
+	"snmp/snmp-collector/pkg/snmpcollector/scheduler"
+	"snmp/snmp-collector/producer/metrics"
+	"snmp/snmp-collector/snmp/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

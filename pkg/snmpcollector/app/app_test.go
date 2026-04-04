@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

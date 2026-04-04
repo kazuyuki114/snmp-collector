@@ -8,8 +8,6 @@
 //
 //	snmpcollector [flags]
 //
-// See ezSNMP-Archi.md §Command-Line Configuration for the full
-// flag reference.
 package main
 
 import (
@@ -23,10 +21,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/app"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/poller"
-	filetransport "github.com/kazuyuki114/ezSNMP/plugin/transport/file"
+	"snmp/snmp-collector/pkg/snmpcollector/app"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
+	"snmp/snmp-collector/pkg/snmpcollector/poller"
+	filetransport "snmp/snmp-collector/plugin/transport/file"
 )
 
 func main() {

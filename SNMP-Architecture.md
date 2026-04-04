@@ -1,6 +1,6 @@
-# ezSNMP Architecture
+# snmp Architecture
 
-> **Module:** `github.com/kazuyuki114/ezSNMP`  
+> **Module:** `github.com/kazuyuki114/snmp`  
 > **Go version:** 1.25.7  
 > **Dependencies:** `gosnmp v1.43.2`, `gopkg.in/yaml.v3 v3.0.1`
 
@@ -27,7 +27,7 @@
 
 ## 1. Overview
 
-ezSNMP is a high-performance, channel-based SNMP polling collector written in Go.
+snmp is a high-performance, channel-based SNMP polling collector written in Go.
 It periodically polls network devices via SNMP (v1, v2c, v3), decodes the raw PDU
 responses into structured metrics, and writes the results as NDJSON (newline-
 delimited JSON) to **stdout** or a **rotating file**.
@@ -88,7 +88,7 @@ size is **10 000** per channel.
 ## 3. Directory Structure
 
 ```
-ezSNMP/
+snmp/
 ├── cmd/snmpcollector/
 │   └── main.go                 # Entry point, CLI flags, signal handling
 ├── models/

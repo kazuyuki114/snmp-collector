@@ -1,4 +1,4 @@
-module github.com/kazuyuki114/ezSNMP
+module snmp/snmp-collector
 
 go 1.25.7
 

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kazuyuki114/ezSNMP/snmp/decoder"
+	"snmp/snmp-collector/snmp/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

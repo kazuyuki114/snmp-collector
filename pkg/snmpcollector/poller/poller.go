@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
-	"github.com/kazuyuki114/ezSNMP/snmp/decoder"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
+	"snmp/snmp-collector/snmp/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

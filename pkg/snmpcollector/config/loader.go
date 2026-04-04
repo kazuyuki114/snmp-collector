@@ -23,8 +23,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/producer/metrics"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/producer/metrics"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/kazuyuki114/ezSNMP/plugin"
+	"snmp/snmp-collector/plugin"
 )
 
 // compile-time interface check.

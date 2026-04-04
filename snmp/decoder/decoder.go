@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gosnmp/gosnmp"
-	"github.com/kazuyuki114/ezSNMP/models"
+	"snmp/snmp-collector/models"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

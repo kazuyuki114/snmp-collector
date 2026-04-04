@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"sort"
 
-	"github.com/kazuyuki114/ezSNMP/models"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/config"
-	"github.com/kazuyuki114/ezSNMP/pkg/snmpcollector/poller"
+	"snmp/snmp-collector/models"
+	"snmp/snmp-collector/pkg/snmpcollector/config"
+	"snmp/snmp-collector/pkg/snmpcollector/poller"
 )
 
 // ResolveJobs walks the config hierarchy for every device and returns a flat

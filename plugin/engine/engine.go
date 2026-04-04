@@ -22,8 +22,8 @@ import (
 	"os"
 	"sync"
 
-	jsonformat "github.com/kazuyuki114/ezSNMP/format/json"
-	"github.com/kazuyuki114/ezSNMP/plugin"
+	jsonformat "snmp/snmp-collector/format/json"
+	"snmp/snmp-collector/plugin"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ package plugin
 import (
 	"time"
 
-	"github.com/kazuyuki114/ezSNMP/models"
+	"snmp/snmp-collector/models"
 )
 
 // Envelope is the standardised internal message that flows from Input plugins

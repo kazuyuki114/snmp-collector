@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/kazuyuki114/ezSNMP/models"
+	"snmp/snmp-collector/models"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
