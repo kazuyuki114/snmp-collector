@@ -102,7 +102,10 @@ func (p *MetricsProducer) Produce(decoded decoder.DecodedPollResult) (models.SNM
 
 	opts := BuildOptions{
 		CollectorID: p.cfg.CollectorID,
-		PollStatus:  "success",
+		PollStatus:  decoded.PollStatus,
+		ErrorType:   decoded.ErrorType,
+		ErrorDetail: decoded.PollError,
+		ObjectKey:   decoded.ObjectDefKey,
 		Enums:       enums,
 		Counters:    p.counters,
 	}

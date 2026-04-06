@@ -1,0 +1,19 @@
+services:
+  # Kafka Broker
+  kafka:
+    extends:
+      file: ./kafka/docker-compose.yml
+      service: kafka
+
+  init-kafka:
+    extends:
+      file: ./kafka/docker-compose.yml
+      service: init-kafka
+
+  kafka-ui:
+    extends:
+      file: ./kafka/docker-compose.yml
+      service: kafka-ui
+
+volumes:
+  kafka-data:

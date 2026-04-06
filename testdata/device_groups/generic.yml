@@ -8,7 +8,7 @@ generic:
     - ietf_icmp
     - ietf_tcp
     - ietf_udp
-    - ietf_snmp
+    # - ietf_snmp
     # - ietf_bridge
     # - ietf_p_bridge   
     # - ietf_q_bridge

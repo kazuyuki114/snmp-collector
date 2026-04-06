@@ -90,13 +90,11 @@ func (w *WorkerPool) worker(ctx context.Context) {
 					"object", job.ObjectDef.Key,
 					"error", err.Error(),
 				)
-				// Still emit the partial result (may have empty Varbinds but
-				// carries timestamps for monitoring/metrics).
-				// If the result has no varbinds at all we skip to avoid
-				// flooding the decoder with empty messages.
-				if len(result.Varbinds) == 0 {
-					continue
-				}
+				result.PollStatus = "error"
+				result.ErrorType = classifyError(err)
+				result.PollError = err.Error()
+			} else {
+				result.PollStatus = "success"
 			}
 			select {
 			case w.output <- result:

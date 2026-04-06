@@ -179,6 +179,33 @@ func (p *SNMPPoller) doBulkWalk(conn *gosnmp.GoSNMP, objDef models.ObjectDefinit
 // OID analysis
 // ─────────────────────────────────────────────────────────────────────────────
 
+// classifyError maps a raw SNMP error to a stable category string used in
+// MetricMetadata.ErrorType for downstream alerting and querying.
+func classifyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "timeout"):
+		return "timeout"
+	case strings.Contains(msg, "connection refused"),
+		strings.Contains(msg, "no route"),
+		strings.Contains(msg, "unreachable"),
+		strings.Contains(msg, "host is down"):
+		return "unreachable"
+	case strings.Contains(msg, "authentication"),
+		strings.Contains(msg, "unknown user"),
+		strings.Contains(msg, "invalid community"):
+		return "auth_failed"
+	case strings.Contains(msg, "nosuchobject"),
+		strings.Contains(msg, "no such object"):
+		return "no_such_object"
+	default:
+		return "error"
+	}
+}
+
 // isScalar returns true when the object definition has no table index —
 // meaning all attributes are scalar OIDs.
 func isScalar(objDef models.ObjectDefinition) bool {

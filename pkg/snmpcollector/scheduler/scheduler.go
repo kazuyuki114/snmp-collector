@@ -164,6 +164,18 @@ func (s *Scheduler) DroppedJobs() int64 {
 	return s.dropped.Load()
 }
 
+// ObjectCounts returns the number of poll objects configured per device hostname.
+// Used by the DeviceAggregator to know when all results for a cycle have arrived.
+func (s *Scheduler) ObjectCounts() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	counts := make(map[string]int, len(s.entries))
+	for _, e := range s.entries {
+		counts[e.hostname] = len(e.jobs)
+	}
+	return counts
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────

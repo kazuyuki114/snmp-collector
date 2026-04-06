@@ -48,5 +48,11 @@ type Metric struct {
 type MetricMetadata struct {
 	CollectorID    string `json:"collector_id"`
 	PollDurationMs int64  `json:"poll_duration_ms"`
-	PollStatus     string `json:"poll_status"` // "success" | "timeout" | "error"
+	PollStatus     string `json:"poll_status"`              // "success" | "error"
+	ObjectKey      string `json:"object_key,omitempty"`     // e.g. "ifTable" — empty on summary records
+	ErrorType      string `json:"error_type,omitempty"`     // "timeout" | "unreachable" | "auth_failed" | "no_such_object" | "error"
+	ErrorDetail    string `json:"error_detail,omitempty"`   // raw error message
+	ObjectsTotal   int    `json:"objects_total,omitempty"`  // set only on device-summary records
+	ObjectsFailed  int    `json:"objects_failed,omitempty"` // set only on device-summary records
+	ObjectsSuccess int    `json:"objects_success,omitempty"`// set only on device-summary records
 }

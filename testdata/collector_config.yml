@@ -31,7 +31,7 @@ processors:
 format:
   pretty: true
 
-config_reload_interval: 0s
+config_reload_interval: 60s
 
 config_paths:
   devices:       testdata/devices
@@ -53,16 +53,16 @@ output:
 
   # ── File output ────────────────────────────────────────────────────────────
   file:
-    enabled: true
+    enabled: false
     path: "snmp-metrics.json"              # e.g. /tmp/snmp-metrics.json
     max_bytes: 10485760   # 10 MB
     max_backups: 3
 
   # ── Kafka output ───────────────────────────────────────────────────────────
   kafka:
-    enabled: false
-    brokers: []           # e.g. ["localhost:9092"]
-    topic: snmp-metrics
+    enabled: true
+    brokers: ["localhost:29092"]
+    topic: snmp
     max_events: 100
     flush_interval: 5s
     buffer_size: 1000

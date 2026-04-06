@@ -1,12 +1,16 @@
 myswitch.lab:
   ip: 127.0.0.1
   port: 161
-  poll_interval: 300
+  poll_interval: 120
   timeout: 3000
   retries: 2
-  version: 2c
-  communities:
-    - public
+  version: 3
+  v3_credentials:
+    - username: testUser
+      authentication_protocol: sha512
+      authentication_passphrase: testAuth
+      privacy_protocol: aes
+      privacy_passphrase: testPriv
   device_groups:
     - generic
   max_concurrent_polls: 2

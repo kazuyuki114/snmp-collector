@@ -5,8 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/gosnmp/gosnmp"
 	"snmp/snmp-collector/models"
+
+	"github.com/gosnmp/gosnmp"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 // RawPollResult is the message placed on the raw-data channel by the Poller after
-// a successful SNMP request. It is the sole input type consumed by the Decoder.
+// a poll attempt (successful or failed). It is the sole input type consumed by the Decoder.
 type RawPollResult struct {
 	// Device carries identifying context about the polled network device.
 	Device models.Device
@@ -24,7 +25,7 @@ type RawPollResult struct {
 	ObjectDef models.ObjectDefinition
 
 	// Varbinds contains the raw SNMP variable bindings from the PDU response,
-	// exactly as returned by the gosnmp library.
+	// exactly as returned by the gosnmp library. Empty on poll failure.
 	Varbinds []gosnmp.SnmpPDU
 
 	// CollectedAt is the wall-clock time at which the SNMP response was received.
@@ -33,6 +34,16 @@ type RawPollResult struct {
 	// PollStartedAt is the wall-clock time at which the SNMP request was sent.
 	// Together with CollectedAt it yields the round-trip poll duration.
 	PollStartedAt time.Time
+
+	// PollStatus is "success" when the poll completed without error, "error" otherwise.
+	PollStatus string
+
+	// ErrorType is a stable category for the failure: "timeout", "unreachable",
+	// "auth_failed", "no_such_object", or "error". Empty on success.
+	ErrorType string
+
+	// PollError is the raw error message returned by the SNMP library. Empty on success.
+	PollError string
 }
 
 // DecodedPollResult is the message placed on the decoded-data channel by the
@@ -49,7 +60,7 @@ type DecodedPollResult struct {
 	// e.g. "IF-MIB::ifEntry". Useful for debugging and routing in the Producer.
 	ObjectDefKey string
 
-	// Varbinds contains the fully decoded variable bindings.
+	// Varbinds contains the fully decoded variable bindings. Empty on poll failure.
 	Varbinds []DecodedVarbind
 
 	// CollectedAt is the wall-clock time at which the SNMP response was received.
@@ -57,6 +68,15 @@ type DecodedPollResult struct {
 
 	// PollDurationMs is the round-trip poll duration in milliseconds.
 	PollDurationMs int64
+
+	// PollStatus is forwarded from RawPollResult: "success" or "error".
+	PollStatus string
+
+	// ErrorType is forwarded from RawPollResult: stable failure category.
+	ErrorType string
+
+	// PollError is forwarded from RawPollResult: raw error message.
+	PollError string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,9 +130,17 @@ func (d *SNMPDecoder) Decode(raw RawPollResult) (DecodedPollResult, error) {
 		ObjectDefKey:   raw.ObjectDef.Key,
 		CollectedAt:    raw.CollectedAt,
 		PollDurationMs: raw.CollectedAt.Sub(raw.PollStartedAt).Milliseconds(),
+		PollStatus:     raw.PollStatus,
+		ErrorType:      raw.ErrorType,
+		PollError:      raw.PollError,
 	}
 
 	if len(raw.Varbinds) == 0 {
+		// Intentional failure record — forward without warning so the aggregator
+		// can count it toward the device's cycle summary.
+		if raw.PollStatus == "error" {
+			return result, nil
+		}
 		d.logger.Warn("decode: empty varbind list",
 			"device", raw.Device.Hostname,
 			"object", raw.ObjectDef.Key,

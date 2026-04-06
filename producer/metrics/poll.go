@@ -20,8 +20,18 @@ type BuildOptions struct {
 	// CollectorID is written into MetricMetadata.CollectorID.
 	CollectorID string
 
-	// PollStatus is "success", "timeout", or "error".
+	// PollStatus is "success" or "error".
 	PollStatus string
+
+	// ErrorType is the stable failure category ("timeout", "unreachable", …).
+	// Empty on success.
+	ErrorType string
+
+	// ErrorDetail is the raw error message. Empty on success.
+	ErrorDetail string
+
+	// ObjectKey identifies the object definition (e.g. "ifTable") for this poll.
+	ObjectKey string
 
 	// Enums, when non-nil, resolves EnumInteger / EnumBitmap / EnumObjectIdentifier
 	// values to their text labels. When nil, raw numeric values are left intact.
@@ -153,6 +163,9 @@ func Build(decoded decoder.DecodedPollResult, opts BuildOptions) models.SNMPMetr
 			CollectorID:    opts.CollectorID,
 			PollDurationMs: decoded.PollDurationMs,
 			PollStatus:     opts.PollStatus,
+			ObjectKey:      opts.ObjectKey,
+			ErrorType:      opts.ErrorType,
+			ErrorDetail:    opts.ErrorDetail,
 		},
 	}
 }
