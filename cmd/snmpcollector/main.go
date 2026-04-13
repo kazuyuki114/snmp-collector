@@ -56,14 +56,17 @@ func run() error {
 
 	// ── Step 2: register all flags (YAML values become the defaults) ─────────
 	var (
-		logLevel  string
-		logFmt    string
-		collID    string
-		pretty    bool
-		workers   int
-		bufSize   int
-		enumOn    bool
-		counterOn bool
+		logLevel         string
+		logFmt           string
+		collID           string
+		pretty           bool
+		otelFormat       bool
+		otelScopeName    string
+		otelScopeVersion string
+		workers          int
+		bufSize          int
+		enumOn           bool
+		counterOn        bool
 
 		decodeWorkers  int
 		produceWorkers int
@@ -115,6 +118,9 @@ func run() error {
 	flag.StringVar(&logFmt, "log.fmt", cc.Log.Format, "Log format: json, text")
 	flag.StringVar(&collID, "collector.id", cc.CollectorID, "Collector instance ID (default: hostname)")
 	flag.BoolVar(&pretty, "format.pretty", cc.Format.Pretty, "Pretty-print JSON output")
+	flag.BoolVar(&otelFormat, "format.otel", cc.Format.OTel, "Emit OpenTelemetry OTLP JSON instead of custom JSON (overrides format.pretty)")
+	flag.StringVar(&otelScopeName, "format.otel.scope-name", cc.Format.OTelScopeName, "OTLP instrumentation scope name (default: snmp-collector)")
+	flag.StringVar(&otelScopeVersion, "format.otel.scope-version", cc.Format.OTelScopeVersion, "OTLP instrumentation scope version string")
 	flag.IntVar(&workers, "poller.workers", cc.Poller.Workers, "Number of concurrent poller workers")
 	flag.IntVar(&bufSize, "pipeline.buffer.size", cc.Pipeline.BufferSize, "Inter-stage channel buffer size")
 	flag.IntVar(&decodeWorkers, "pipeline.decode.workers", cc.Pipeline.DecodeWorkers, "Number of parallel decode-stage goroutines")
@@ -181,6 +187,9 @@ func run() error {
 		CounterDeltaEnabled:  counterOn,
 		CounterPurgeInterval: secondsToDuration(counterPurgeSec),
 		PrettyPrint:          pretty,
+		OTelFormat:           otelFormat,
+		OTelScopeName:        otelScopeName,
+		OTelScopeVersion:     otelScopeVersion,
 		PoolOptions: poller.PoolOptions{
 			MaxIdlePerDevice: poolMaxIdle,
 			IdleTimeout:      secondsToDuration(poolIdleSec),

@@ -146,7 +146,8 @@ type Decoder interface {
 }
 ```
 
-Implementations **must be safe for concurrent use** — the pipeline runs 100 decoder goroutines (default) all calling the same instance.
+Implementations **must be safe for concurrent use** — the pipeline can run multiple
+decoder goroutines calling the same instance (`pipeline.decode_workers`, default `1`).
 
 The production implementation is `SNMPDecoder`. Use the interface in all types that depend on decoding to keep them testable.
 
@@ -295,6 +296,11 @@ The caller (pipeline supervisor or decoder worker loop) should:
 - **Log** the error with the `device` and `object` fields.
 - **Emit the partial result** to the producer channel so the 11 good metrics are not lost.
 - **Increment** the `poll_errors_total{device,error_type="decode"}` Prometheus counter.
+
+The production app worker loop follows this rule: on decode error it forwards
+the partial result when `len(result.Varbinds) > 0`, and only drops the record
+when no decoded varbinds are available. There is no aggregator stage downstream —
+partial results flow directly to the producer.
 
 ---
 

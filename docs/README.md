@@ -112,12 +112,19 @@ Producer (N) → [metricCh] → Formatter → [formattedCh] → Transport
 |---|---|
 | `Transport` | Output/delivery plugin: `Name()`, `Send(data []byte)`, `Close()` |
 
+### Built-in formatters
+
+| Formatter | Package | Description |
+|---|---|---|
+| **JSON** | `format/json` | Custom JSON schema (default). Compact or pretty-printed. |
+| **OTLP JSON** | `format/otel` | OpenTelemetry `ExportMetricsServiceRequest` JSON. Enabled with `format.otel: true`. |
+
 ### Built-in transports
 
 | Plugin | Package | Description |
 |---|---|---|
-| **Stdout** | `pkg/snmpcollector/app` (inline) | Writes JSON + newline to `os.Stdout`. Default when no output is configured. |
-| **File** | `plugin/transport/file` | Writes JSON to a rotating file. Activated by `output.file.path`. |
+| **Stdout** | `pkg/snmpcollector/app` (inline) | Writes formatted bytes + newline to `os.Stdout`. Default when no output is configured. |
+| **File** | `plugin/transport/file` | Writes to a rotating file. Activated by `output.file.path`. |
 | **Kafka** | `plugin/transport/kafka` | Batched delivery to Apache Kafka via `sarama.SyncProducer`. Activated by `output.kafka.brokers`. |
 
 ---
@@ -152,7 +159,7 @@ output.kafka.brokers non-empty?  →  Kafka transport
 | [models.md](models.md) | Core data structures (`SNMPMetric`, `Device`, `Metric`), configuration types (`ObjectDefinition`, `AttributeDefinition`), design constraints |
 | [decoder.md](decoder.md) | SNMP response decoder — pipeline position, `RawPollResult` / `DecodedPollResult` channel types, `VarbindParser` OID matching, `ConvertValue` syntax-to-Go-type table, error handling, usage examples |
 | [producer.md](producer.md) | Metrics producer — `EnumRegistry` (integer / bitmap / OID enums), `CounterState` (delta + wrap detection), `Build()` assembly steps, `MetricsProducer` interface, concurrency contract |
-| [formatter.md](formatter.md) | JSON formatter — `Formatter` interface, `Config`, `Format()` schema, timestamp format, value type preservation, pretty-print, concurrency contract |
+| [formatter.md](formatter.md) | Formatters — `Formatter` interface; JSON formatter (custom schema, pretty-print); OTel formatter (OTLP JSON, resource/scope/metric mapping, unit table) |
 | [poller.md](poller.md) | SNMP poller — `Poller` interface, `ConnectionPool`, `WorkerPool`, session factory, operation selection (Get/Walk/BulkWalk), concurrency contract |
 | [scheduler.md](scheduler.md) | Polling scheduler — `Scheduler`, `JobSubmitter` interface, `ResolveJobs()` config hierarchy resolution, timer management, hot reload |
 | [plugin-dev-guide.md](plugin-dev-guide.md) | Writing new Transport plugins — interfaces, package layout, step-by-step guide, design rules |
@@ -163,13 +170,14 @@ output.kafka.brokers non-empty?  →  Kafka transport
 [1]  models/                          — shared data contract (no deps)
 [2]  snmp/decoder/                    — PDU → DecodedVarbind
 [3]  producer/metrics/                — DecodedVarbind → SNMPMetric
-[4]  format/json/                     — SNMPMetric → []byte (JSON)
-[5]  pkg/snmpcollector/config/        — YAML config loader (SNMP data + collector config)
-[6]  pkg/snmpcollector/poller/        — SNMP Get/Bulk/Walk + connection pool
-[7]  pkg/snmpcollector/scheduler/     — polling job queue
-[8]  pkg/snmpcollector/app/           — pipeline wiring + lifecycle
-[9]  plugin/                          — Transport interface
-[10] plugin/transport/file/           — File transport (rotation)
-[11] plugin/transport/kafka/          — Kafka transport (batching, TLS, SASL)
-[12] cmd/snmpcollector/               — binary entry point
+[4]  format/json/                     — SNMPMetric → []byte (custom JSON)
+[5]  format/otel/                     — SNMPMetric → []byte (OTLP JSON)
+[6]  pkg/snmpcollector/config/        — YAML config loader (SNMP data + collector config)
+[7]  pkg/snmpcollector/poller/        — SNMP Get/Bulk/Walk + connection pool
+[8]  pkg/snmpcollector/scheduler/     — polling job queue
+[9]  pkg/snmpcollector/app/           — pipeline wiring + lifecycle
+[10] plugin/                          — Transport interface
+[11] plugin/transport/file/           — File transport (rotation)
+[12] plugin/transport/kafka/          — Kafka transport (batching, TLS, SASL)
+[13] cmd/snmpcollector/               — binary entry point
 ```

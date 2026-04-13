@@ -5,6 +5,8 @@
 //
 //	Scheduler → WorkerPool → [rawCh] → Decoder (N) → [decodedCh] →
 //	Producer (N) → [metricCh] → Formatter → [formattedCh] → Transport
+//
+// Metrics flow directly from Producer to Formatter — there is no aggregation stage.
 package app
 
 import (
@@ -17,9 +19,9 @@ import (
 	"time"
 
 	jsonformat "snmp/snmp-collector/format/json"
+	otelformat "snmp/snmp-collector/format/otel"
 	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
-	"snmp/snmp-collector/pkg/snmpcollector/aggregator"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/pkg/snmpcollector/poller"
 	"snmp/snmp-collector/pkg/snmpcollector/scheduler"
@@ -60,8 +62,19 @@ type Config struct {
 	// CounterDeltaEnabled controls counter delta computation for Counter32/64.
 	CounterDeltaEnabled bool
 
-	// PrettyPrint enables indented JSON output.
+	// PrettyPrint enables indented JSON output (ignored when OTelFormat is true).
 	PrettyPrint bool
+
+	// OTelFormat switches the formatter from the custom JSON schema to
+	// OpenTelemetry OTLP JSON (ExportMetricsServiceRequest).
+	OTelFormat bool
+
+	// OTelScopeName overrides the OTLP instrumentation scope name.
+	// Defaults to "snmp-collector".
+	OTelScopeName string
+
+	// OTelScopeVersion sets the OTLP instrumentation scope version string.
+	OTelScopeVersion string
 
 	// Transport is the output destination. It must implement plugin.Transport.
 	// nil defaults to a stdout transport.
@@ -84,10 +97,6 @@ type Config struct {
 	// directories and updates the scheduler at this interval. 0 disables
 	// automatic reload.
 	ConfigReloadInterval time.Duration
-
-	// AggregatorWindow is the maximum time to wait for all objects in a device
-	// poll cycle before emitting a partial summary record. Defaults to 60s.
-	AggregatorWindow time.Duration
 }
 
 func (c *Config) withDefaults() {
@@ -139,11 +148,10 @@ type App struct {
 	transport  plugin.Transport
 
 	// Inter-stage channels.
-	rawCh        chan decoder.RawPollResult
-	decodedCh    chan decoder.DecodedPollResult
-	metricCh     chan models.SNMPMetric
-	aggregatedCh chan models.SNMPMetric // post-aggregator, feeds formatter
-	formattedCh  chan []byte
+	rawCh       chan decoder.RawPollResult
+	decodedCh   chan decoder.DecodedPollResult
+	metricCh    chan models.SNMPMetric
+	formattedCh chan []byte
 
 	// Lifecycle.
 	cancel context.CancelFunc
@@ -185,7 +193,6 @@ func (a *App) Start(ctx context.Context) error {
 	a.rawCh = make(chan decoder.RawPollResult, a.cfg.BufferSize)
 	a.decodedCh = make(chan decoder.DecodedPollResult, a.cfg.BufferSize)
 	a.metricCh = make(chan models.SNMPMetric, a.cfg.BufferSize)
-	a.aggregatedCh = make(chan models.SNMPMetric, a.cfg.BufferSize)
 	a.formattedCh = make(chan []byte, a.cfg.BufferSize)
 
 	// ── 3. Build pipeline components (transport first so it is ready) ───
@@ -195,9 +202,16 @@ func (a *App) Start(ctx context.Context) error {
 		a.transport = newWriterTransport(os.Stdout, a.logger)
 	}
 
-	a.formatter = jsonformat.New(jsonformat.Config{
-		PrettyPrint: a.cfg.PrettyPrint,
-	}, a.logger)
+	if a.cfg.OTelFormat {
+		a.formatter = otelformat.New(otelformat.Config{
+			ScopeName:    a.cfg.OTelScopeName,
+			ScopeVersion: a.cfg.OTelScopeVersion,
+		}, a.logger)
+	} else {
+		a.formatter = jsonformat.New(jsonformat.Config{
+			PrettyPrint: a.cfg.PrettyPrint,
+		}, a.logger)
+	}
 
 	a.prod = metrics.New(metrics.Config{
 		CollectorID:         a.cfg.CollectorID,
@@ -221,7 +235,6 @@ func (a *App) Start(ctx context.Context) error {
 	// ── 5. Start pipeline goroutines (transport first, sources last) ─────
 	a.startTransportStage(pipeCtx)
 	a.startFormatStage(pipeCtx)
-	a.startAggregateStage(pipeCtx)
 	a.startProduceStage(pipeCtx)
 	a.startDecodeStage(pipeCtx)
 
@@ -263,6 +276,8 @@ func (a *App) Start(ctx context.Context) error {
 //     closes metricCh → formatter drains → closes formattedCh.
 //  5. Transport goroutine drains formattedCh → exits.
 //  6. Close transport and connection pool.
+//
+// metricCh feeds directly into the formatter.
 func (a *App) Stop() {
 	a.logger.Info("app: shutting down")
 
@@ -352,9 +367,8 @@ func (a *App) startDecodeStage(_ context.Context) {
 						continue
 					}
 				}
-				// Only drop empty results from successful polls — failure records
-				// must pass through so the aggregator can count them.
-				if len(decoded.Varbinds) == 0 && decoded.PollStatus == "success" {
+				// Only drop empty results from successful polls.
+			if len(decoded.Varbinds) == 0 && decoded.PollStatus == "success" {
 					continue
 				}
 				a.decodedCh <- decoded
@@ -391,9 +405,8 @@ func (a *App) startProduceStage(_ context.Context) {
 					)
 					continue
 				}
-				// Only drop zero-metric results from successful polls — failure
-				// records (metrics==[], poll_status==error) must reach the aggregator.
-				if len(metric.Metrics) == 0 && metric.Metadata.PollStatus == "success" {
+				// Only drop zero-metric results from successful polls.
+			if len(metric.Metrics) == 0 && metric.Metadata.PollStatus == "success" {
 					continue
 				}
 				a.metricCh <- metric
@@ -409,38 +422,15 @@ func (a *App) startProduceStage(_ context.Context) {
 	}()
 }
 
-// startAggregateStage reads SNMPMetric from metricCh, passes each record
-// through to aggregatedCh unchanged, and emits a per-device summary record
-// once all objects for a poll cycle have been accounted for.
-// Closes aggregatedCh when metricCh is drained.
-func (a *App) startAggregateStage(ctx context.Context) {
-	agg := aggregator.New(
-		aggregator.Config{
-			ObjectCounts: a.sched.ObjectCounts(),
-			Window:       a.cfg.AggregatorWindow,
-			CollectorID:  a.cfg.CollectorID,
-		},
-		a.metricCh,
-		a.aggregatedCh,
-		a.logger,
-	)
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		defer close(a.aggregatedCh)
-		agg.Run(ctx)
-	}()
-}
-
-// startFormatStage reads SNMPMetric from aggregatedCh, formats to JSON, and
-// sends to formattedCh. Closes formattedCh when aggregatedCh is drained.
+// startFormatStage reads SNMPMetric from metricCh, formats to JSON, and
+// sends to formattedCh. Closes formattedCh when metricCh is drained.
 func (a *App) startFormatStage(_ context.Context) {
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 		defer close(a.formattedCh)
 
-		for metric := range a.aggregatedCh {
+		for metric := range a.metricCh {
 			data, err := a.formatter.Format(&metric)
 			if err != nil {
 				a.logger.Warn("app: format error",

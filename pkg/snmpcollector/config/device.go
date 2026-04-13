@@ -44,13 +44,15 @@ type V3Credentials struct {
 	// Username is the SNMPv3 security name.
 	Username string `yaml:"username"`
 
-	// AuthenticationProtocol is one of: noauth, md5, sha, sha224, sha256, sha384, sha512.
+	// AuthenticationProtocol is one of: noauth, md5, sha (aliases: sha1, sha128),
+	// sha224, sha256, sha384, sha512.
 	AuthenticationProtocol string `yaml:"authentication_protocol"`
 
 	// AuthenticationPassphrase is the passphrase for the chosen auth protocol.
 	AuthenticationPassphrase string `yaml:"authentication_passphrase"`
 
-	// PrivacyProtocol is one of: nopriv, des, aes, aes192, aes256, aes192c, aes256c.
+	// PrivacyProtocol is one of: nopriv, des (alias: des56), aes (alias: aes128),
+	// aes192, aes256, aes192c, aes256c.
 	PrivacyProtocol string `yaml:"privacy_protocol"`
 
 	// PrivacyPassphrase is the passphrase for the chosen privacy protocol.

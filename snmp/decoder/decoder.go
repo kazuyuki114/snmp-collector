@@ -136,8 +136,7 @@ func (d *SNMPDecoder) Decode(raw RawPollResult) (DecodedPollResult, error) {
 	}
 
 	if len(raw.Varbinds) == 0 {
-		// Intentional failure record — forward without warning so the aggregator
-		// can count it toward the device's cycle summary.
+		// Intentional failure record — forward metadata downstream unchanged.
 		if raw.PollStatus == "error" {
 			return result, nil
 		}

@@ -89,7 +89,7 @@ func mapAuthProto(s string) gosnmp.SnmpV3AuthProtocol {
 	switch strings.ToLower(s) {
 	case "md5":
 		return gosnmp.MD5
-	case "sha":
+	case "sha", "sha1", "sha128":
 		return gosnmp.SHA
 	case "sha224":
 		return gosnmp.SHA224
@@ -106,9 +106,9 @@ func mapAuthProto(s string) gosnmp.SnmpV3AuthProtocol {
 
 func mapPrivProto(s string) gosnmp.SnmpV3PrivProtocol {
 	switch strings.ToLower(s) {
-	case "des":
+	case "des", "des56":
 		return gosnmp.DES
-	case "aes":
+	case "aes", "aes128":
 		return gosnmp.AES
 	case "aes192":
 		return gosnmp.AES192

@@ -1,6 +1,6 @@
 # SNMP — Comprehensive Architecture Report
 
-> Generated from full codebase audit of all Go source files (31), test files, YAML configs, and documentation.
+> Generated from full codebase audit of all Go source files, test files, YAML configs, and documentation.
 
 ---
 
@@ -54,8 +54,10 @@ snmp/snmp-collector
 │   ├── poll.go                 #   Build() — core assembly function
 │   ├── normalize.go            #   CounterState — delta computation, wrap detection
 │   └── enrich.go               #   EnumRegistry — integer/bitmap/OID enum resolution
-├── format/json/                # Stage 5: SNMPMetric → JSON bytes
+├── format/json/                # Stage 5a: SNMPMetric → custom JSON bytes
 │   └── formatter.go            #   Formatter interface, JSONFormatter
+├── format/otel/                # Stage 5b: SNMPMetric → OTLP JSON bytes
+│   └── formatter.go            #   OTel Formatter (ExportMetricsServiceRequest)
 ├── plugin/                     # Plugin system interfaces
 │   ├── envelope.go             #   Envelope message type
 │   ├── input.go                #   Input interface
@@ -78,7 +80,8 @@ snmp/snmp-collector
     ├── poller/
     │   ├── poller.go           #   Poller interface, SNMPPoller (Get/Walk/BulkWalk)
     │   ├── pool.go             #   ConnectionPool — per-device SNMP session pool
-    │   ├── session.go          #   gosnmp session factory
+    │   ├── session.go          #   gosnmp session factory (auth/priv protocol mapping)
+    │   ├── session_test.go     #   Protocol alias mapping tests
     │   └── worker.go           #   WorkerPool — fan-out job dispatcher
     └── scheduler/
         ├── scheduler.go        #   Timer-based poll job dispatch loop
@@ -234,7 +237,7 @@ The collector implements a **6-stage concurrent pipeline** connected by buffered
                     │                                           [metricCh]             │
                     │                                                │                  │
                     │                                           [5] Formatter          │
-                    │                                                │ JSON Marshal    │
+                    │                                                │ JSON / OTLP     │
                     │                                                ▼                  │
                     │                                           [formattedCh]          │
                     │                                                │                  │
@@ -243,7 +246,7 @@ The collector implements a **6-stage concurrent pipeline** connected by buffered
                     │                                                │ kafka           │
                     └────────────────────────────────────────────────┼─────────────────┘
                                                                      ▼
-                                                              JSON-lines output
+                                                        JSON-lines or OTLP JSON output
 ```
 
 ### Channel Cascade & Shutdown
@@ -264,9 +267,9 @@ Shutdown is orderly, cascading from head to tail:
 
 The production binary uses a single direct pipeline implementation in `pkg/snmpcollector/app/app.go`.
 
-### Direct Pipeline (`pkg/snmpcollector/app/app.go`, 529 lines)
+### Direct Pipeline (`pkg/snmpcollector/app/app.go`)
 
-Wires all stages directly with 4 buffered channels (`rawCh`, `decodedCh`, `metricCh`, `formattedCh`). Uses an inline `writerTransport` (writes to `os.Stdout`) when no external transport is configured. Supports `Reload()` for hot config refresh.
+Wires all stages directly with 4 buffered channels (`rawCh`, `decodedCh`, `metricCh`, `formattedCh`). Uses an inline `writerTransport` (writes to `os.Stdout`) when no external transport is configured. Supports `Reload()` for hot config refresh. Metrics flow directly from Producer to Formatter (no aggregator stage).
 
 ```go
 type Config struct {
@@ -280,7 +283,10 @@ type Config struct {
     EnumEnabled          bool
     CounterDeltaEnabled  bool
     CounterPurgeInterval time.Duration
-    PrettyPrint          bool
+    PrettyPrint          bool            // custom JSON only; ignored when OTelFormat=true
+    OTelFormat           bool            // emit OTLP JSON instead of custom JSON
+    OTelScopeName        string          // OTLP scope name (default "snmp-collector")
+    OTelScopeVersion     string          // OTLP scope version string
     Transport            plugin.Transport // nil = inline stdout writer
     ConfigReloadInterval time.Duration
 }
@@ -363,7 +369,12 @@ type CollectorConfig struct {
         Enum    struct{ Enable bool }
         Counter struct{ DeltaEnable bool; PurgeInterval string }
     }
-    Format struct{ Pretty bool }
+    Format struct {
+        Pretty           bool
+        OTel             bool   // emit OTLP JSON instead of custom JSON
+        OTelScopeName    string // default "snmp-collector"
+        OTelScopeVersion string
+    }
     ConfigPaths struct {
         Devices, DeviceGroups, ObjectGroups, Objects, Enums string
     }
@@ -487,9 +498,21 @@ Walk root OID = `LowestCommonOID()` of all attribute OIDs.
 - Idle timeout with automatic session replacement
 - Custom dialer injection for testing
 
+**SNMPv3 auth/priv protocol aliases** (all case-insensitive):
+
+| Config string | Maps to |
+|---|---|
+| `md5` | HMAC-MD5 |
+| `sha`, `sha1`, `sha128` | HMAC-SHA-1 |
+| `sha224` / `sha256` / `sha384` / `sha512` | HMAC-SHA-224/256/384/512 |
+| `des`, `des56` | DES-56 |
+| `aes`, `aes128` | AES-128 |
+| `aes192` / `aes256` | AES-192 / AES-256 |
+| `aes192c` / `aes256c` | AES-192C / AES-256C (Cisco) |
+
 **Worker Pool** (`WorkerPool`):
 - N goroutines (default 500) pulling from a buffered jobs channel (capacity = `numWorkers × 2`)
-- Failed polls with no varbinds are logged but not forwarded (prevents flooding)
+- Failed polls with no varbinds are dropped before the output channel — prevents flooding downstream with empty error records
 - `Submit()` blocking, `TrySubmit()` non-blocking
 
 ### 8.4 Decoder (`snmp/decoder/`, 776 lines total)
@@ -534,12 +557,30 @@ Walk root OID = `LowestCommonOID()` of all attribute OIDs.
 - Wrap detection: Counter32 wraps at 2³²−1, Counter64 at 2⁶⁴−1
 - `Purge(maxAge)` reclaims memory for decommissioned interfaces
 
-### 8.6 Formatter (`format/json/`, 120 lines)
+### 8.6 Formatters
 
-- `Formatter` interface with single `Format(*SNMPMetric) ([]byte, error)` method
-- `JSONFormatter` — stateless, concurrent-safe
-- Supports compact (production) and pretty-print (debug) modes
-- Uses standard `json.Marshal`/`json.MarshalIndent`
+Two formatters share the same interface (`format/json.Formatter`):
+
+```go
+type Formatter interface {
+    Format(*SNMPMetric) ([]byte, error)
+}
+```
+
+**JSON Formatter** (`format/json/`):
+- Stateless, concurrent-safe
+- Compact (production) and pretty-print (debug) modes via `Config.PrettyPrint`
+- Uses standard `json.Marshal` / `json.MarshalIndent`
+
+**OTel Formatter** (`format/otel/`):
+- Outputs an OTLP `ExportMetricsServiceRequest` JSON payload (OpenTelemetry wire format)
+- No external SDK — schema implemented with stdlib types
+- Mapping: `Device` → `resource.attributes`; one `SNMPMetric` → one `ResourceMetrics` → one `ScopeMetrics`
+- `Counter32`/`Counter64` → `sum` (isMonotonic=true, CUMULATIVE); all other numeric types → `gauge`
+- String/byte values skipped (not representable as OTLP numbers)
+- Multiple metrics with the same name are merged into one OTLP metric with multiple data points
+- UCUM unit strings derived from SNMP syntax (`BandwidthMBits` → `Mbit/s`, `TimeTicks` → `cs`, etc.)
+- Enabled via `format.otel: true` in collector config or `-format.otel` CLI flag
 
 ### 8.7 Transports
 
@@ -614,11 +655,13 @@ Per `docs/plugin-dev-guide.md`, new plugins:
 
 | File | Tests | Coverage Area |
 |---|---|---|
-| `format/json/formatter_test.go` (~402 lines) | 15+ tests | Construction, nil input, JSON schema compliance (top-level keys, RFC3339 timestamps, device fields, metrics array structure, value types, tags), metadata, compact vs pretty, edge cases |
-| `snmp/decoder/decoder_test.go` (~300 lines) | 10+ tests | VarbindParser (count, instance extraction, tag flagging, empty def error), SNMPDecoder (happy path, empty varbinds), ConvertValue (BandwidthMBits, Counter64, MACAddress, IpAddress, error types) |
-| `producer/metrics/producer_test.go` (~500 lines) | 20+ tests | EnumRegistry (integer, bitmap, OID, passthrough), CounterState (first/second observation, Counter32 wrap, purge), Build (metric count, tags, override resolution Counter64>Counter32, enum resolution, counter delta, metadata, empty varbinds), MetricsProducer end-to-end |
+| `format/json/formatter_test.go` | 15+ tests | Construction, nil input, JSON schema compliance (top-level keys, RFC3339 timestamps, device fields, metrics array structure, value types, tags), metadata, compact vs pretty, edge cases |
+| `format/otel/formatter_test.go` | 18 tests | Nil input, resource attributes, scope name/version, Counter64→sum, Counter32→sum, Gauge32→gauge, int64/float64/string values, multiple instances, multiple metric names, data point attributes, timeUnixNano, unit mapping, empty metrics, device tags |
+| `snmp/decoder/decoder_test.go` | 10+ tests | VarbindParser (count, instance extraction, tag flagging, empty def error), SNMPDecoder (happy path, empty varbinds), ConvertValue (BandwidthMBits, Counter64, MACAddress, IpAddress, error types) |
+| `producer/metrics/producer_test.go` | 20+ tests | EnumRegistry (integer, bitmap, OID, passthrough), CounterState (first/second observation, Counter32 wrap, purge), Build (metric count, tags, override resolution Counter64>Counter32, enum resolution, counter delta, metadata, empty varbinds), MetricsProducer end-to-end |
 | `pkg/snmpcollector/config/loader_test.go` | — | Config loading, path resolution |
-| `pkg/snmpcollector/poller/poller_test.go` | 14 tests | Connection pool, session lifecycle, poll operations, dial errors |
+| `pkg/snmpcollector/poller/session_test.go` | 30 tests | Auth protocol aliases (md5, sha1, sha128, sha256…), priv protocol aliases (des56, aes128, aes192…), case-insensitive matching |
+| `pkg/snmpcollector/poller/poller_test.go` | 16 tests | Connection pool, session lifecycle, poll operations, dial errors, worker pool error/cancel/backpressure |
 | `pkg/snmpcollector/scheduler/scheduler_test.go` | 16 tests | Timer algorithm, hot reload, concurrent reload, TrySubmit backpressure |
 | `pkg/snmpcollector/app/app_test.go` | — | End-to-end pipeline |
 
@@ -638,6 +681,7 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 | SNMP Decoder | ✅ PDU parsing, type conversion, varbind matching | `snmp/decoder/` |
 | Producer | ✅ Normalize, enrich (enum), counter delta, override resolution | `producer/metrics/` |
 | JSON Formatter | ✅ Compact + pretty, full schema | `format/json/` |
+| **OTel Formatter** | ✅ OTLP JSON (ExportMetricsServiceRequest), resource/scope/metric mapping, unit strings | `format/otel/` |
 | Stdout Transport | ✅ Inline writer in app.go | `pkg/snmpcollector/app/app.go` |
 | File Transport | ✅ With size-based rotation | `plugin/transport/file/` |
 | **Kafka Transport** | ✅ Batching, TLS, SASL, compression | `plugin/transport/kafka/` |
@@ -657,7 +701,7 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 | **Trap Listener** | UDP port 162, v1/v2c/v3 trap parsing, inform ACK | **Not implemented** — no `snmp/trap/`, no `pkg/snmpcollector/trapreceiver/` |
 | **MIB Parser** | ASN.1 MIB file parser, OID tree, resolver | **Not implemented** — uses hand-authored YAML object definitions instead |
 | **MIB Tool** | `cmd/mibtool/` CLI utility | **Not implemented** |
-| **Protobuf Formatter** | Binary serialization format | **Not implemented** — `format/json/` only |
+| **Protobuf Formatter** | Binary serialization format | **Not implemented** |
 | **OpenMetrics/Prometheus Formatter** | Prometheus exposition format | **Not implemented** |
 | **Time Series Producer** | `producer/timeseries/` (Prometheus, InfluxDB, OpenTSDB) | **Not implemented** |
 | **Event Producer** | `producer/event/` (trap→alert conversion, severity mapping) | **Not implemented** |
@@ -669,7 +713,7 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 
 ### Summary
 
-The **polling pipeline is fully implemented and production-ready**: Config → Scheduler → Poller → Decoder → Producer → Formatter → Transport (stdout / file / Kafka). The **trap collection side is entirely unimplemented**. The MIB tooling layer is also unimplemented — the system relies on hand-authored YAML object definitions instead of dynamic MIB parsing.
+The **polling pipeline is fully implemented and production-ready**: Config → Scheduler → Poller → Decoder → Producer → Formatter → Transport (stdout / file / Kafka). Two output formats are supported: custom JSON and OpenTelemetry OTLP JSON. The **trap collection side is entirely unimplemented**. The MIB tooling layer is also unimplemented — the system relies on hand-authored YAML object definitions instead of dynamic MIB parsing.
 
 ---
 
@@ -697,20 +741,21 @@ The **polling pipeline is fully implemented and production-ready**: Config → S
 | `snmp/decoder/varbind.go` | `decoder` | 176 | `DecodedVarbind`, `VarbindParser`, `NewVarbindParser()`, `Parse()` |
 | `snmp/decoder/types.go` | `decoder` | 426 | `PDUTypeString()`, `IsErrorType()`, `ConvertValue()` |
 | `format/json/formatter.go` | `json` | 120 | `Formatter` interface, `JSONFormatter`, `Config`, `New()`, `Format()` |
-| `pkg/snmpcollector/app/app.go` | `app` | 529 | `App`, `Config`, `New()`, `Start()`, `Stop()`, `Reload()` |
-| `pkg/snmpcollector/config/collector_config.go` | `config` | 282 | `CollectorConfig`, `CollectorStdoutConfig`, `CollectorFileConfig`, `CollectorKafkaConfig`, `DefaultCollectorConfig()`, `LoadCollectorConfig()` |
+| `format/otel/formatter.go` | `otel` | ~290 | `Formatter`, `Config`, `New()`, `Format()`, OTLP JSON schema types |
+| `pkg/snmpcollector/app/app.go` | `app` | ~545 | `App`, `Config` (incl. OTelFormat/OTelScopeName/OTelScopeVersion), `New()`, `Start()`, `Stop()`, `Reload()` |
+| `pkg/snmpcollector/config/collector_config.go` | `config` | ~290 | `CollectorConfig` (incl. Format.OTel/OTelScopeName/OTelScopeVersion), `DefaultCollectorConfig()`, `LoadCollectorConfig()` |
 | `pkg/snmpcollector/config/device.go` | `config` | 85 | `DeviceConfig`, `V3Credentials`, `DeviceGroup`, `ObjectGroup` |
 | `pkg/snmpcollector/config/loader.go` | `config` | 615 | `Paths`, `PathsFromEnv()`, `LoadedConfig`, `Load()` |
 | `pkg/snmpcollector/health/server.go` | `health` | 68 | `Server`, `NewServer()`, `Start()`, `Stop()` |
 | `pkg/snmpcollector/poller/poller.go` | `poller` | 227 | `Poller` interface, `PollJob`, `SNMPPoller`, `Poll()`, `LowestCommonOID()` |
 | `pkg/snmpcollector/poller/pool.go` | `poller` | 249 | `ConnectionPool`, `PoolOptions`, `NewConnectionPool()`, `Get()`, `Put()`, `Discard()`, `Close()` |
-| `pkg/snmpcollector/poller/session.go` | `poller` | 124 | `NewSession()` |
+| `pkg/snmpcollector/poller/session.go` | `poller` | 128 | `NewSession()`, `mapAuthProto()`, `mapPrivProto()`, `snmpv3MsgFlags()` |
 | `pkg/snmpcollector/poller/worker.go` | `poller` | 110 | `WorkerPool`, `NewWorkerPool()`, `Start()`, `Submit()`, `TrySubmit()`, `Stop()` |
 | `pkg/snmpcollector/scheduler/scheduler.go` | `scheduler` | 215 | `Scheduler`, `JobSubmitter` interface, `New()`, `Start()`, `Stop()`, `Reload()`, `Entries()` |
 | `pkg/snmpcollector/scheduler/resolve.go` | `scheduler` | 88 | `ResolveJobs()` |
 | `internal/noop/noop.go` | `noop` | 9 | `Writer{}` — no-op io.Writer for test loggers |
 
-**Total: ~5,750 lines of Go source code** (excluding tests)
+**Total: ~6,050 lines of Go source code** (excluding tests)
 
 ### Import Dependency Graph
 
@@ -721,9 +766,10 @@ models ← (no imports)
   │     ↑
   │     ├── producer/metrics ← models, snmp/decoder
   │     │     ↑
-  │     │     └── format/json ← models
+  │     │     ├── format/json ← models
+  │     │     └── format/otel ← models, internal/noop
   │     │
-  │     └── pkg/snmpcollector/app ← config, poller, scheduler, decoder, metrics, format/json, plugin
+  │     └── pkg/snmpcollector/app ← config, poller, scheduler, decoder, metrics, format/json, format/otel, plugin
   │
   ├── plugin ← models
   │     ├── plugin/transport/file ← plugin
@@ -740,12 +786,18 @@ models ← (no imports)
   └── pkg/snmpcollector/health ← (stdlib only)
 ```
 
-### Output Format (`metrics.json`)
+### Output Formats
 
-The output is **JSON-lines** (one JSON document per line, not a JSON array). Each line is a complete `SNMPMetric` document:
+Two output formats are available, selected by `format.otel` in the collector config:
 
+**Custom JSON (default)** — JSON-lines, one document per line:
 ```json
 {"timestamp":"2026-04-04T15:53:46.514+07:00","device":{"hostname":"myswitch.lab","ip_address":"127.0.0.1","snmp_version":"2c"},"metrics":[{"oid":"1.3.6.1.2.1.11.4.0","name":"snmp.msgs.community_unknown.in","instance":"0","value":0,"type":"Counter32","syntax":"Counter32"}],"metadata":{"collector_id":"dev-collector-01","poll_duration_ms":0,"poll_status":"success"}}
+```
+
+**OTLP JSON** (`format.otel: true`) — one `ExportMetricsServiceRequest` per poll result:
+```json
+{"resourceMetrics":[{"resource":{"attributes":[{"key":"host.name","value":{"stringValue":"myswitch.lab"}},{"key":"net.host.ip","value":{"stringValue":"127.0.0.1"}},{"key":"snmp.version","value":{"stringValue":"2c"}}]},"scopeMetrics":[{"scope":{"name":"snmp-collector","version":"1.0.0"},"metrics":[{"name":"snmp.msgs.community_unknown.in","sum":{"dataPoints":[{"attributes":[{"key":"instance","value":{"stringValue":"0"}}],"timeUnixNano":"1743767626514000000","asInt":"0"}],"aggregationTemporality":2,"isMonotonic":true}}]}]}]}
 ```
 
 ---
@@ -754,10 +806,11 @@ The output is **JSON-lines** (one JSON document per line, not a JSON array). Eac
 
 **snmp-collector** is a production-quality SNMP polling collector with:
 - A clean 6-stage pipeline (Scheduler → Poller → Decoder → Producer → Formatter → Transport)
-- Three output transports: stdout, rotating file, and Kafka (with TLS + SASL)
+- **Two output formats**: custom JSON schema and OpenTelemetry OTLP JSON (`format.otel: true`)
+- **Three output transports**: stdout, rotating file, and Kafka (with TLS + SASL)
 - `enabled: true/false` output selection — exactly one transport active per run, validated at startup
-- Comprehensive SNMP v1/v2c/v3 support via gosnmp
+- Comprehensive SNMP v1/v2c/v3 support with full auth/priv protocol aliases (`sha1`, `sha128`, `des56`, `aes128`, etc.)
 - Rich type conversion (50+ SNMP syntax types)
 - Enum resolution (integer/bitmap/OID), counter delta computation with wrap detection
 - Config hot-reload, graceful cascade shutdown, and an HTTP health endpoint
-- ~5,750 lines of Go across 31 source files
+- ~6,050 lines of Go source code

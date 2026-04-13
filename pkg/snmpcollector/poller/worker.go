@@ -90,6 +90,9 @@ func (w *WorkerPool) worker(ctx context.Context) {
 					"object", job.ObjectDef.Key,
 					"error", err.Error(),
 				)
+				if len(result.Varbinds) == 0 {
+					continue
+				}
 				result.PollStatus = "error"
 				result.ErrorType = classifyError(err)
 				result.PollError = err.Error()

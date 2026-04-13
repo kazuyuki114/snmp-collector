@@ -1,28 +1,33 @@
-# `format/json` — JSON Formatter
+# Formatters — Stage 5
 
 ## Overview
 
-The `format/json` package is **Stage 5** of the SNMP Collector pipeline. It serialises
-a `models.SNMPMetric` value (produced by Stage 4 — `producer/metrics`) into a JSON byte
-slice that is passed to the transport layer.
+Stage 5 of the pipeline serialises a `models.SNMPMetric` (from Stage 4 —
+`producer/metrics`) into a `[]byte` payload that is forwarded to the transport.
 
 ```
 producer/metrics [Stage 4]
      │  models.SNMPMetric
      ▼
-format/json.JSONFormatter [Stage 5]
-     │  []byte  (JSON)
+Formatter [Stage 5]          ← format/json  OR  format/otel
+     │  []byte
      ▼
 plugin/transport/* [Stage 6]
 ```
 
-JSON is the **primary and currently only implemented output format**. The package is
-designed so that additional formatters (Protobuf, Prometheus, InfluxDB …) can be added
-by implementing the `Formatter` interface without modifying any other package.
+Two formatters are available. The active one is selected by the `format.otel`
+config flag (see [configuration.md](configuration.md)):
+
+| Formatter | Package | Output |
+|---|---|---|
+| **JSON** (default) | `format/json` | Custom JSON schema |
+| **OTLP JSON** | `format/otel` | OpenTelemetry `ExportMetricsServiceRequest` |
 
 ---
 
 ## Formatter interface
+
+Both formatters implement the same interface defined in `format/json`:
 
 ```go
 type Formatter interface {
@@ -30,48 +35,23 @@ type Formatter interface {
 }
 ```
 
-`JSONFormatter` implements `Formatter`. Downstream callers (e.g. the transport layer)
-may program against this interface so they remain format-agnostic.
+Returns a non-nil error only on `metric == nil` or a marshalling failure. The
+returned byte slice is always non-nil on success.
 
 ---
 
-## Config
+## JSON Formatter (`format/json`)
+
+### Config
 
 ```go
 type Config struct {
     PrettyPrint bool   // default false — compact output for production
-    Indent      string // indent string when PrettyPrint=true; default "  " (two spaces)
+    Indent      string // indent string when PrettyPrint=true; default "  "
 }
 ```
 
----
-
-## Construction
-
-```go
-func New(cfg Config, logger *slog.Logger) *JSONFormatter
-```
-
-- If `logger` is `nil`, a no-op writer is substituted; the formatter never panics.
-- If `PrettyPrint=true` and `Indent=""`, the indent defaults to two spaces `"  "`.
-
----
-
-## Format()
-
-```go
-func (f *JSONFormatter) Format(metric *models.SNMPMetric) ([]byte, error)
-```
-
-Returns a non-nil error only when `metric == nil` or `json.Marshal` fails. The returned
-byte slice is always non-nil on success.
-
----
-
-## JSON schema
-
-The output matches the architecture spec exactly. All JSON keys come from the `json`
-struct tags on the model types in `models/metric.go`.
+### Output schema
 
 ```json
 {
@@ -81,15 +61,7 @@ struct tags on the model types in `models/metric.go`.
     "ip_address": "192.168.1.1",
     "snmp_version": "2c",
     "vendor": "Cisco",
-    "model": "ASR1000",
-    "sys_descr": "Cisco IOS Software, ASR1000 Software",
-    "sys_location": "DC1-Rack5",
-    "sys_contact": "netops@example.com",
-    "tags": {
-      "environment": "production",
-      "role": "edge-router",
-      "site": "dc1"
-    }
+    "tags": { "site": "dc1" }
   },
   "metrics": [
     {
@@ -99,21 +71,7 @@ struct tags on the model types in `models/metric.go`.
       "value": 1234567890,
       "type": "Counter64",
       "syntax": "Counter64",
-      "tags": {
-        "netif.descr": "GigabitEthernet0/0/1",
-        "netif.type": "ethernetCsmacd"
-      }
-    },
-    {
-      "oid": "1.3.6.1.2.1.2.2.1.8.1",
-      "name": "netif.state.oper",
-      "instance": "1",
-      "value": "up",
-      "type": "Integer",
-      "syntax": "EnumInteger",
-      "tags": {
-        "netif.descr": "GigabitEthernet0/0/1"
-      }
+      "tags": { "netif.descr": "GigabitEthernet0/0/1" }
     }
   ],
   "metadata": {
@@ -128,77 +86,148 @@ struct tags on the model types in `models/metric.go`.
 
 | Behaviour | Detail |
 |---|---|
-| Timestamp format | RFC 3339 Nano (e.g. `"2026-02-26T10:30:00.123Z"`) — Go's `time.Time` default |
-| `value` type | Preserved as-is: `uint64` → JSON number, `int64` → JSON number, `float64` → JSON number, `string` → JSON string |
-| `tags` omitted | When a `Metric.Tags` map is `nil` or empty, `"tags"` is absent from the object |
-| `metadata` omitted | When `MetricMetadata` is a zero value, `"metadata"` is absent (struct tag `omitempty`) |
-| `instance` omitted | When `Metric.Instance` is `""`, `"instance"` is absent (struct tag `omitempty`) |
+| Timestamp format | RFC 3339 Nano — Go's `time.Time` default |
+| `value` type | Preserved as-is: `uint64`/`int64`/`float64` → JSON number, `string` → JSON string |
+| `tags` omitted | When `nil` or empty |
+| `instance` omitted | When `""` |
+| `metadata` omitted | When zero value |
+
+### YAML config
+
+```yaml
+format:
+  pretty: false   # true = indented JSON (useful for debugging)
+```
 
 ---
 
-## Usage
+## OTel Formatter (`format/otel`)
+
+Outputs an **OTLP `ExportMetricsServiceRequest`** — the standard
+OpenTelemetry wire format for metrics, compatible with any OTLP receiver
+(Grafana Alloy, OpenTelemetry Collector, etc.).
+
+No external OpenTelemetry SDK is required; the schema is implemented with
+standard library types.
+
+### Config
 
 ```go
-import (
-    fmtjson "github.com/snmp/snmp_collector/format/json"
-    "log/slog"
-)
-
-formatter := fmtjson.New(fmtjson.Config{}, slog.Default())
-
-// In the pipeline worker goroutine:
-data, err := formatter.Format(&metric)
-if err != nil {
-    // err means metric==nil or json.Marshal failed – both are programming errors
-    slog.Error("format failed", "error", err)
-    continue
+type Config struct {
+    ScopeName    string // default "snmp-collector"
+    ScopeVersion string // optional
 }
-// data is a JSON byte slice ready to send to transport
 ```
 
-### Pretty-print (debugging / file transport)
+### SNMPMetric → OTLP mapping
 
-```go
-formatter := fmtjson.New(fmtjson.Config{PrettyPrint: true}, nil)
-data, _ := formatter.Format(&metric)
-fmt.Println(string(data))
+| `models.SNMPMetric` field | OTLP location |
+|---|---|
+| `Device.Hostname` | `resource.attributes["host.name"]` |
+| `Device.IPAddress` | `resource.attributes["net.host.ip"]` |
+| `Device.SNMPVersion` | `resource.attributes["snmp.version"]` |
+| `Device.Vendor` | `resource.attributes["device.vendor"]` (omitted when empty) |
+| `Device.Model` | `resource.attributes["device.model"]` (omitted when empty) |
+| `Device.SysDescr` | `resource.attributes["device.sys_descr"]` (omitted when empty) |
+| `Device.SysLocation` | `resource.attributes["device.sys_location"]` (omitted when empty) |
+| `Device.Tags["k"]` | `resource.attributes["device.tag.k"]` |
+| `Timestamp` | `dataPoints[].timeUnixNano` (decimal string, nanoseconds) |
+| `Metric.Name` | `metrics[].name` — same name → one OTLP metric, multiple data points |
+| `Metric.Instance` | `dataPoints[].attributes["instance"]` |
+| `Metric.Tags["k"]` | `dataPoints[].attributes["k"]` |
+| `Metric.Value` (int64/uint64) | `dataPoints[].asInt` (decimal string) |
+| `Metric.Value` (float64) | `dataPoints[].asDouble` (JSON number) |
+| `Metric.Value` (string/[]byte) | **skipped** — not representable as an OTLP number |
+
+### SNMP type → OTLP instrument type
+
+| SNMP type | OTLP instrument | `isMonotonic` | Temporality |
+|---|---|---|---|
+| `Counter32`, `Counter64` | `sum` | `true` | `CUMULATIVE` (2) |
+| All other numeric types | `gauge` | — | — |
+
+### Syntax → OTLP unit
+
+| Config syntax | OTLP unit (UCUM) |
+|---|---|
+| `BandwidthBits` | `bit/s` |
+| `BandwidthKBits` | `kbit/s` |
+| `BandwidthMBits` | `Mbit/s` |
+| `BandwidthGBits` | `Gbit/s` |
+| `TimeTicks` | `cs` (centiseconds) |
+| All others | `""` (empty) |
+
+### Output schema
+
+```json
+{
+  "resourceMetrics": [{
+    "resource": {
+      "attributes": [
+        {"key": "host.name",    "value": {"stringValue": "router01.example.com"}},
+        {"key": "net.host.ip",  "value": {"stringValue": "192.168.1.1"}},
+        {"key": "snmp.version", "value": {"stringValue": "2c"}},
+        {"key": "device.vendor","value": {"stringValue": "Cisco"}}
+      ]
+    },
+    "scopeMetrics": [{
+      "scope": {"name": "snmp-collector", "version": "1.0.0"},
+      "metrics": [
+        {
+          "name": "netif.bytes.in",
+          "sum": {
+            "dataPoints": [
+              {
+                "attributes": [
+                  {"key": "instance",    "value": {"stringValue": "1"}},
+                  {"key": "netif.descr", "value": {"stringValue": "Gi0/0/1"}}
+                ],
+                "timeUnixNano": "1740563400123000000",
+                "asInt": "1234567890"
+              }
+            ],
+            "aggregationTemporality": 2,
+            "isMonotonic": true
+          }
+        },
+        {
+          "name": "cpu.util",
+          "gauge": {
+            "dataPoints": [
+              {
+                "timeUnixNano": "1740563400123000000",
+                "asInt": "42"
+              }
+            ]
+          }
+        }
+      ]
+    }]
+  }]
+}
+```
+
+### YAML config
+
+```yaml
+format:
+  otel: true
+  otel_scope_name: "snmp-collector"    # optional, this is the default
+  otel_scope_version: "1.0.0"          # optional
+```
+
+### CLI flags
+
+```
+-format.otel                    enable OTLP JSON output
+-format.otel.scope-name         override instrumentation scope name
+-format.otel.scope-version      set instrumentation scope version
 ```
 
 ---
 
 ## Concurrency
 
-`JSONFormatter` is **stateless** after construction — all fields are immutable. It is
-safe to call `Format` from any number of concurrent goroutines without additional
-synchronisation.
-
----
-
-## Logging
-
-On each successful call, `Format` emits a single `slog.Debug` entry:
-
-```json
-{"level":"DEBUG","msg":"format/json: formatted metric",
- "collector_id":"collector-01","hostname":"router01.example.com",
- "metric_count":3,"bytes":1024}
-```
-
-On error:
-
-```json
-{"level":"ERROR","msg":"format/json: marshal failed",
- "collector_id":"collector-01","object_def":"router01.example.com",
- "error":"json: unsupported type: ..."}
-```
-
----
-
-## Edge cases
-
-| Scenario | Behaviour |
-|---|---|
-| `metric == nil` | Returns `fmt.Errorf("format/json: metric must not be nil")` |
-| `metric.Metrics` empty / nil | Produces `"metrics":null` or `"metrics":[]` depending on nil vs empty slice — both are valid |
-| `logger == nil` | No-op writer substituted; no panic |
-| Unserialisable value in `Metric.Value` | `json.Marshal` returns an error; error is logged and returned |
+Both formatters are **stateless** after construction — all fields are immutable.
+`Format` is safe to call from any number of concurrent goroutines without
+additional synchronisation.

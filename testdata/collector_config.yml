@@ -29,9 +29,11 @@ processors:
     purge_interval: 5m
 
 format:
-  pretty: true
+  otel: true
+  otel_scope_name: "snmp-collector"
+  otel_scope_version: "1.0.0"
 
-config_reload_interval: 60s
+config_reload_interval: 100s
 
 config_paths:
   devices:       testdata/devices

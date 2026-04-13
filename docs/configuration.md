@@ -173,16 +173,30 @@ counter state.
 
 ### format
 
-Controls the JSON output format for metrics sent to the transport.
+Controls the output format for metrics sent to the transport.
 
 | Field | Type | Default | CLI flag |
 |---|---|---|---|
 | `format.pretty` | `bool` | `false` | `-format.pretty` |
+| `format.otel` | `bool` | `false` | `-format.otel` |
+| `format.otel_scope_name` | `string` | `snmp-collector` | `-format.otel.scope-name` |
+| `format.otel_scope_version` | `string` | `""` | `-format.otel.scope-version` |
 
 ```yaml
+# Custom JSON (default)
 format:
   pretty: false   # true = indented JSON (useful for debugging)
+
+# OpenTelemetry OTLP JSON
+format:
+  otel: true
+  otel_scope_name: "snmp-collector"   # instrumentation scope name
+  otel_scope_version: "1.0.0"         # instrumentation scope version (optional)
 ```
+
+When `otel: true`, the output is an OTLP `ExportMetricsServiceRequest` JSON
+payload instead of the custom schema. `pretty` is ignored in OTel mode.
+See [formatter.md](formatter.md) for the full OTLP mapping.
 
 ---
 
@@ -304,6 +318,9 @@ for duration fields; the YAML accepts Go duration strings (`30s`, `5m`, etc.).
 | `-log.fmt` | `log.format` | `json` |
 | `-collector.id` | `collector_id` | hostname |
 | `-format.pretty` | `format.pretty` | `false` |
+| `-format.otel` | `format.otel` | `false` |
+| `-format.otel.scope-name` | `format.otel_scope_name` | `snmp-collector` |
+| `-format.otel.scope-version` | `format.otel_scope_version` | `""` |
 | `-pipeline.buffer.size` | `pipeline.buffer_size` | `10000` |
 | `-pipeline.decode.workers` | `pipeline.decode_workers` | `1` |
 | `-pipeline.produce.workers` | `pipeline.produce_workers` | `1` |
@@ -412,8 +429,14 @@ processors:
     purge_interval: 5m
 
 # ── Output format ─────────────────────────────────────────────────────────────
+# Custom JSON (default):
 format:
   pretty: false
+# OpenTelemetry OTLP JSON (mutually exclusive with pretty):
+# format:
+#   otel: true
+#   otel_scope_name: "snmp-collector"
+#   otel_scope_version: ""
 
 # ── Config management ─────────────────────────────────────────────────────────
 config_reload_interval: 0s

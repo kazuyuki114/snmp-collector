@@ -14,11 +14,12 @@ messages into the decoder channel.
 
 ```
 pkg/snmpcollector/poller/
-├── session.go    — gosnmp session factory (DeviceConfig → *gosnmp.GoSNMP)
-├── pool.go       — per-device connection pool with concurrency limiting
-├── poller.go     — Poller interface + SNMPPoller (Get / Walk / BulkWalk)
-├── worker.go     — WorkerPool fan-out dispatcher
-└── poller_test.go — 14 unit tests
+├── session.go      — gosnmp session factory (DeviceConfig → *gosnmp.GoSNMP)
+├── session_test.go — auth/priv protocol mapping tests
+├── pool.go         — per-device connection pool with concurrency limiting
+├── poller.go       — Poller interface + SNMPPoller (Get / Walk / BulkWalk)
+├── worker.go       — WorkerPool fan-out dispatcher
+└── poller_test.go  — unit tests
 ```
 
 ## Key Types
@@ -126,16 +127,46 @@ SNMPv3 message flags are derived from the credential's auth/priv protocols:
 - auth only → `AuthNoPriv`
 - neither → `NoAuthNoPriv`
 
+### SNMPv3 supported protocols
+
+All values are case-insensitive in the device YAML.
+
+**Authentication (`authentication_protocol`)**
+
+| Config value(s) | Protocol |
+|---|---|
+| `md5` | HMAC-MD5 |
+| `sha`, `sha1`, `sha128` | HMAC-SHA-1 |
+| `sha224` | HMAC-SHA-224 |
+| `sha256` | HMAC-SHA-256 |
+| `sha384` | HMAC-SHA-384 |
+| `sha512` | HMAC-SHA-512 |
+| `noauth` or empty | No authentication |
+
+**Privacy (`privacy_protocol`)**
+
+| Config value(s) | Protocol |
+|---|---|
+| `des`, `des56` | DES-56 |
+| `aes`, `aes128` | AES-128 |
+| `aes192` | AES-192 |
+| `aes256` | AES-256 |
+| `aes192c` | AES-192 (Cisco variant) |
+| `aes256c` | AES-256 (Cisco variant) |
+| `nopriv` or empty | No privacy |
+
 ## Concurrency Contract
 
 - `SNMPPoller` and `ConnectionPool` are safe for concurrent use.
 - `WorkerPool.Submit()` may be called from any goroutine.
 - `WorkerPool.Stop()` must be called exactly once after calling `Start()`.
 
-## Tests (14 total)
+## Tests
 
 | Test | What it verifies |
 |---|---|
+| `TestMapAuthProto/*` | All auth protocol string aliases (md5, sha1, sha128, sha256…) |
+| `TestMapPrivProto/*` | All priv protocol string aliases (des56, aes128, aes192…) |
 | `TestLowestCommonOID/*` | 4 subtests: single, two siblings, divergent, empty |
 | `TestNewSession_UnsupportedVersion` | Error on version "4" |
 | `TestConnectionPool_GetPut` | Session reuse (LIFO) |
@@ -148,5 +179,5 @@ SNMPv3 message flags are derived from the credential's auth/priv protocols:
 | `TestWorkerPool_Dispatch` | N jobs → N results |
 | `TestWorkerPool_ContextCancel` | Workers exit on cancellation |
 | `TestWorkerPool_TrySubmit_Full` | Non-blocking submit when full |
-| `TestWorkerPool_PollError_NoVarbinds` | Empty results not forwarded |
+| `TestWorkerPool_PollError_NoVarbinds` | Error with no varbinds is dropped, not forwarded |
 | `TestPollJob_Fields` | PollJob construction |
