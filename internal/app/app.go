@@ -76,9 +76,19 @@ type Config struct {
 	// OTelScopeVersion sets the OTLP instrumentation scope version string.
 	OTelScopeVersion string
 
-	// Transport is the output destination. It must implement plugin.Transport.
-	// nil defaults to a stdout transport.
+	// Transport is the output destination for single-lifecycle deployments.
+	// It must implement plugin.Transport. nil defaults to a stdout transport.
+	//
+	// In HA deployments where Start/Stop may be called more than once, use
+	// TransportFactory instead: app.Stop calls transport.Close(), so the same
+	// instance cannot be reused on the next Start.
 	Transport plugin.Transport
+
+	// TransportFactory, when non-nil, is called on every Start to create a
+	// fresh transport. Takes precedence over Transport. Use this in Active/
+	// Standby HA mode so each failover cycle gets a new connection rather than
+	// reusing the one that was closed by the previous Stop.
+	TransportFactory func() (plugin.Transport, error)
 
 	// DecodeWorkers is the number of parallel decode-stage goroutines.
 	// Default: 1.
@@ -212,9 +222,16 @@ func (a *App) Start(ctx context.Context) error {
 	a.formattedCh = make(chan []byte, a.cfg.BufferSize)
 
 	// ── 3. Build pipeline components (transport first so it is ready) ───
-	if a.cfg.Transport != nil {
+	switch {
+	case a.cfg.TransportFactory != nil:
+		t, err := a.cfg.TransportFactory()
+		if err != nil {
+			return fmt.Errorf("app: create transport: %w", err)
+		}
+		a.transport = t
+	case a.cfg.Transport != nil:
 		a.transport = a.cfg.Transport
-	} else {
+	default:
 		a.transport = newWriterTransport(os.Stdout, a.logger)
 	}
 

@@ -18,15 +18,18 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"snmp/snmp-collector/internal/app"
 	"snmp/snmp-collector/internal/config"
+	"snmp/snmp-collector/internal/ha"
 	"snmp/snmp-collector/internal/health"
-	"snmp/snmp-collector/internal/poller"
+	"snmp/snmp-collector/internal/plugin"
 	filetransport "snmp/snmp-collector/internal/plugin/transport/file"
 	kafkatransport "snmp/snmp-collector/internal/plugin/transport/kafka"
+	"snmp/snmp-collector/internal/poller"
 )
 
 func main() {
@@ -103,6 +106,10 @@ func run() error {
 
 		healthAddr string
 
+		haEnable  bool
+		haRole    string
+		haPeerURL string
+
 		cfgReloadSec    int
 		counterPurgeSec int
 
@@ -170,6 +177,10 @@ func run() error {
 	flag.StringVar(&cfgEnums, "config.enums", cc.ConfigPaths.Enums, "Override PROCESSOR_SNMP_ENUM_DEFINITIONS_DIRECTORY_PATH")
 	flag.StringVar(&healthAddr, "health.addr", cc.Health.Addr, "Address to expose /health endpoint (e.g. :8080); disabled if empty")
 
+	flag.BoolVar(&haEnable, "ha.enable", cc.HA.Enabled, "Enable Active/Standby HA manager")
+	flag.StringVar(&haRole, "ha.role", cc.HA.Role, "HA role for this node: primary (DC) or standby (DR)")
+	flag.StringVar(&haPeerURL, "ha.peer.url", cc.HA.PeerURL, "Base HTTP URL of the peer node")
+
 	flag.Parse()
 
 	// ── Step 3: build the application (identical to before) ─────────────────
@@ -207,12 +218,13 @@ func run() error {
 
 	// ── Step 4: select output transport ─────────────────────────────────────
 	//
-	// When a config file is present, the output block with enabled: true wins.
-	// Exactly one block should have enabled: true; stdout block (or no block
-	// enabled) means write to stdout (cfg.Transport stays nil).
-	//
-	// Without a config file (pure CLI flags), fall back to priority logic:
-	//   kafka brokers non-empty → file path non-empty → stdout.
+	// buildTransport is a factory closure that creates a fresh transport from
+	// the resolved flags/YAML. In non-HA mode it is called once and the result
+	// stored in cfg.Transport. In HA mode it is stored in cfg.TransportFactory
+	// so each app.Start() (failover/failback cycle) gets a new connection —
+	// calling app.Stop() closes the previous transport and it cannot be reused.
+	var buildTransport func() (plugin.Transport, error)
+
 	if preScanFlag(os.Args[1:], "config") != "" {
 		enabledCount := 0
 		if cc.Output.Stdout.Enabled {
@@ -249,7 +261,7 @@ func run() error {
 					Mechanism: cc.Output.Kafka.SASL.Mechanism,
 				}
 			}
-			kt, err := kafkatransport.New(kafkatransport.Config{
+			ktCfg := kafkatransport.Config{
 				Brokers:       cc.Output.Kafka.Brokers,
 				Topic:         cc.Output.Kafka.Topic,
 				MaxEvents:     cc.Output.Kafka.MaxEvents,
@@ -262,30 +274,28 @@ func run() error {
 				Version:       cc.Output.Kafka.Version,
 				TLS:           tlsCfg,
 				SASL:          saslCfg,
-			}, logger)
-			if err != nil {
-				return fmt.Errorf("output kafka: %w", err)
 			}
-			cfg.Transport = kt
+			buildTransport = func() (plugin.Transport, error) {
+				return kafkatransport.New(ktCfg, logger)
+			}
 
 		case cc.Output.File.Enabled:
-			ft, err := filetransport.New(filetransport.Config{
+			ftCfg := filetransport.Config{
 				FilePath:   cc.Output.File.Path,
 				MaxBytes:   cc.Output.File.MaxBytes,
 				MaxBackups: cc.Output.File.MaxBackups,
-			}, logger)
-			if err != nil {
-				return fmt.Errorf("output file: %w", err)
 			}
-			cfg.Transport = ft
 			logger.Info("output: writing metrics to file",
 				"path", cc.Output.File.Path,
 				"max_bytes", cc.Output.File.MaxBytes,
 				"max_backups", cc.Output.File.MaxBackups,
 			)
+			buildTransport = func() (plugin.Transport, error) {
+				return filetransport.New(ftCfg, logger)
+			}
 
 		default:
-			// stdout.enabled: true or no block enabled → stdout (nil Transport)
+			// stdout.enabled: true or no block enabled → stdout (buildTransport stays nil)
 		}
 	} else {
 		// CLI-only mode: priority logic (kafka brokers → file path → stdout)
@@ -310,7 +320,7 @@ func run() error {
 					Mechanism: kafkaSASLMechanism,
 				}
 			}
-			kt, err := kafkatransport.New(kafkatransport.Config{
+			ktCfg := kafkatransport.Config{
 				Brokers:       strings.Split(kafkaBrokers, ","),
 				Topic:         kafkaTopic,
 				MaxEvents:     kafkaMaxEvents,
@@ -323,28 +333,39 @@ func run() error {
 				Version:       kafkaVersion,
 				TLS:           tlsCfg,
 				SASL:          saslCfg,
-			}, logger)
-			if err != nil {
-				return fmt.Errorf("output kafka: %w", err)
 			}
-			cfg.Transport = kt
+			buildTransport = func() (plugin.Transport, error) {
+				return kafkatransport.New(ktCfg, logger)
+			}
 
 		case outputFile != "":
-			ft, err := filetransport.New(filetransport.Config{
+			ftCfg := filetransport.Config{
 				FilePath:   outputFile,
 				MaxBytes:   outputMaxBytes,
 				MaxBackups: outputMaxBackups,
-			}, logger)
-			if err != nil {
-				return fmt.Errorf("output file: %w", err)
 			}
-			cfg.Transport = ft
 			logger.Info("output: writing metrics to file",
 				"path", outputFile,
 				"max_bytes", outputMaxBytes,
 				"max_backups", outputMaxBackups,
 			)
+			buildTransport = func() (plugin.Transport, error) {
+				return filetransport.New(ftCfg, logger)
+			}
 		}
+	}
+
+	// Wire the transport into app.Config.
+	// HA mode: use TransportFactory so each Start() creates a fresh connection.
+	// Non-HA mode: build once now and store in Transport (existing behaviour).
+	if haEnable {
+		cfg.TransportFactory = buildTransport // nil = stdout; app handles it
+	} else if buildTransport != nil {
+		t, err := buildTransport()
+		if err != nil {
+			return fmt.Errorf("output: %w", err)
+		}
+		cfg.Transport = t
 	}
 
 	application := app.New(cfg, logger)
@@ -352,21 +373,76 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := application.Start(ctx); err != nil {
-		return fmt.Errorf("start: %w", err)
+	// ── Step 5: wire HA manager (if enabled) ─────────────────────────────────
+	//
+	// stopApp is an idempotent wrapper around application.Stop so that a
+	// /demote-driven stop and the SIGTERM shutdown path never both call
+	// close(rawCh), which would panic.
+	var stopOnce sync.Once
+	stopApp := func() { stopOnce.Do(application.Stop) }
+
+	var haMgr *ha.Manager
+	if haEnable {
+		if haPeerURL == "" {
+			return fmt.Errorf("ha: ha.peer.url must be set when ha.enable is true")
+		}
+		role := ha.RoleStandby
+		if haRole == "primary" {
+			role = ha.RolePrimary
+		}
+		haMgr = ha.New(ha.Config{
+			Role:                role,
+			PeerURL:             haPeerURL,
+			HealthCheckInterval: parseDurationOrDefault(cc.HA.HealthCheckInterval, 5*time.Second),
+			HealthCheckTimeout:  parseDurationOrDefault(cc.HA.HealthCheckTimeout, 5*time.Second),
+			FailoverThreshold:   cc.HA.FailoverThreshold,
+			DemoteTimeout:       parseDurationOrDefault(cc.HA.DemoteTimeout, 30*time.Second),
+		}, logger)
+		haMgr.OnStartPolling(func() {
+			if err := application.Start(ctx); err != nil {
+				logger.Error("ha: failed to start polling engine", "error", err)
+			}
+		})
+		haMgr.OnStopPolling(stopApp)
+	} else {
+		// Standalone mode — start the polling engine unconditionally.
+		if err := application.Start(ctx); err != nil {
+			return fmt.Errorf("start: %w", err)
+		}
 	}
 
+	// ── Step 6: start HTTP server (health + optional /demote) ────────────────
+	//
+	// The server is started before the HA manager so that /demote is already
+	// accepting connections when the Primary's startup demotePeer call arrives,
+	// and /health is answering before the peer's health-check loop fires.
 	if healthAddr != "" {
 		healthSrv := health.NewServer(healthAddr, collID, logger)
+		if haMgr != nil {
+			healthSrv.Handle("/demote", haMgr.DemoteHandler())
+		}
 		healthSrv.Start()
 		defer healthSrv.Stop(ctx)
+	}
+
+	// ── Step 7: start HA manager ──────────────────────────────────────────────
+	if haMgr != nil {
+		haMgr.Start(ctx)
 	}
 
 	logger.Info("snmpcollector: running — press Ctrl-C to stop")
 	<-ctx.Done()
 	logger.Info("snmpcollector: received shutdown signal")
 
-	application.Stop()
+	// ── Step 8: graceful shutdown ─────────────────────────────────────────────
+	if haMgr != nil {
+		// Stop the HA background loop. This does NOT fire OnStopPolling;
+		// it only cancels the peer-health-check / preemption goroutine.
+		haMgr.Stop()
+	}
+	// stopApp is idempotent: no-op if the app was already stopped by a
+	// /demote-triggered OnStopPolling call during normal HA operation.
+	stopApp()
 	return nil
 }
 
