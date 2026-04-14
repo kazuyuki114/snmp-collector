@@ -225,12 +225,6 @@ func run() error {
 	}
 
 	// ── Step 4: select output transport ─────────────────────────────────────
-	//
-	// buildTransport is a factory closure that creates a fresh transport from
-	// the resolved flags/YAML. In non-HA mode it is called once and the result
-	// stored in cfg.Transport. In HA mode it is stored in cfg.TransportFactory
-	// so each app.Start() (failover/failback cycle) gets a new connection —
-	// calling app.Stop() closes the previous transport and it cannot be reused.
 	var buildTransport func() (plugin.Transport, error)
 
 	if preScanFlag(os.Args[1:], "config") != "" {
