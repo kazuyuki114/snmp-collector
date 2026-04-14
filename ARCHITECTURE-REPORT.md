@@ -381,6 +381,8 @@ type CollectorConfig struct {
     ConfigReloadInterval string
     Health struct{ Addr string } // e.g. ":8080"; empty disables
     Output struct {
+        SendMaxRetry   int
+        SendRetryDelay string
         Stdout CollectorStdoutConfig // enabled bool
         File   CollectorFileConfig   // enabled, path, max_bytes, max_backups
         Kafka  CollectorKafkaConfig  // enabled, brokers, topic, tls, sasl, ...
@@ -587,6 +589,12 @@ type Formatter interface {
 **Stdout** (inline `writerTransport` in `app.go`):
 - Active when `cfg.Transport == nil`
 - Writes to `os.Stdout`; no separate plugin package
+
+**Transport send retry policy** (`pkg/snmpcollector/app/app.go`):
+- Every failed `transport.Send()` is retried up to `TransportMaxRetry`
+- Delay between attempts: `TransportRetryDelay`
+- After retries are exhausted, message is dropped with an error log
+- No transport fallback is attempted; pipeline keeps running
 
 **File** (`plugin/transport/file/`, 324 lines):
 - Wraps `RotatingFile` — size-based file rotation

@@ -148,6 +148,10 @@ output.kafka.brokers non-empty?  →  Kafka transport
         else  →  Stdout (default)
 ```
 
+Transport send failures are retried using `output.send_max_retry` and
+`output.send_retry_delay`. If all attempts fail, the message is dropped and an
+error is logged.
+
 ---
 
 ## Module docs

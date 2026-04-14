@@ -269,6 +269,21 @@ Exactly one output transport is active at a time.
 **Selection priority:** Kafka (if `brokers` is non-empty) → File (if `path` is
 non-empty) → stdout (default).
 
+#### output.send
+
+These settings control retry behavior when a transport `Send()` call fails.
+
+| Field | Type | Default | CLI flag |
+|---|---|---|---|
+| `output.send_max_retry` | `int` | `3` | `-output.send.retry.max` |
+| `output.send_retry_delay` | `duration` | `1s` | `-output.send.retry.delay` |
+
+Behavior:
+- The collector retries failed `Send()` calls up to `send_max_retry` times.
+- It waits `send_retry_delay` between attempts.
+- If all attempts fail, the message is dropped and an error is logged.
+- The process keeps running on the same transport (no fallback transport).
+
 #### output.kafka
 
 See [kafka-transport.md](kafka-transport.md) for full Kafka documentation.
@@ -337,6 +352,8 @@ for duration fields; the YAML accepts Go duration strings (`30s`, `5m`, etc.).
 | `-config.objects` | `config_paths.objects` | env / default |
 | `-config.enums` | `config_paths.enums` | env / default |
 | `-health.addr` | `health.addr` | `""` |
+| `-output.send.retry.max` | `output.send_max_retry` | `3` |
+| `-output.send.retry.delay` | `output.send_retry_delay` | `1s` |
 | `-output.file` | `output.file.path` | `""` |
 | `-output.file.max-bytes` | `output.file.max_bytes` | `52428800` |
 | `-output.file.max-backups` | `output.file.max_backups` | `5` |
@@ -375,6 +392,10 @@ output.kafka.brokers non-empty?
 
 Only one transport is active per process. To fan out to multiple destinations,
 run multiple collector instances.
+
+On transport send failures, the collector retries according to
+`output.send_max_retry` and `output.send_retry_delay`. When retries are
+exhausted, the message is dropped and processing continues.
 
 ---
 
@@ -454,6 +475,9 @@ health:
 
 # ── Output ────────────────────────────────────────────────────────────────────
 output:
+  send_max_retry: 3
+  send_retry_delay: 1s
+
   kafka:
     brokers: []      # non-empty activates Kafka output
     topic: ""
