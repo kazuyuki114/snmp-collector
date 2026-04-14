@@ -97,6 +97,16 @@ type Config struct {
 	// directories and updates the scheduler at this interval. 0 disables
 	// automatic reload.
 	ConfigReloadInterval time.Duration
+
+	// TransportMaxRetry is the number of times to retry a failed Send call
+	// before giving up and dropping the message. 0 means no retries (fail
+	// immediately on first error). The program keeps running regardless.
+	// Default: 3.
+	TransportMaxRetry int
+
+	// TransportRetryDelay is the pause between consecutive Send retries.
+	// Default: 1s.
+	TransportRetryDelay time.Duration
 }
 
 func (c *Config) withDefaults() {
@@ -121,6 +131,12 @@ func (c *Config) withDefaults() {
 	}
 	if c.CounterPurgeInterval == 0 {
 		c.CounterPurgeInterval = 5 * time.Minute
+	}
+	if c.TransportMaxRetry <= 0 {
+		c.TransportMaxRetry = 3
+	}
+	if c.TransportRetryDelay <= 0 {
+		c.TransportRetryDelay = time.Second
 	}
 }
 
@@ -445,16 +461,39 @@ func (a *App) startFormatStage(_ context.Context) {
 }
 
 // startTransportStage reads formatted bytes from formattedCh and writes them
-// via the transport.
-func (a *App) startTransportStage(_ context.Context) {
+// via the transport. On failure it retries up to TransportMaxRetry times with
+// TransportRetryDelay between attempts. If all attempts fail the message is
+// dropped and an error is logged — the program keeps running on the same
+// transport with no fallback to another output type.
+func (a *App) startTransportStage(ctx context.Context) {
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 
 		for data := range a.formattedCh {
-			if err := a.transport.Send(data); err != nil {
-				a.logger.Error("app: transport send error",
-					"error", err.Error(),
+			var sendErr error
+			for attempt := 0; attempt <= a.cfg.TransportMaxRetry; attempt++ {
+				if attempt > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(a.cfg.TransportRetryDelay):
+					}
+					a.logger.Warn("app: retrying transport send",
+						"attempt", attempt,
+						"max_retry", a.cfg.TransportMaxRetry,
+						"error", sendErr.Error(),
+					)
+				}
+				if sendErr = a.transport.Send(data); sendErr == nil {
+					break
+				}
+			}
+			if sendErr != nil {
+				a.logger.Error("app: transport send failed, dropping message",
+					"retries", a.cfg.TransportMaxRetry,
+					"transport", a.transport.Name(),
+					"error", sendErr.Error(),
 					"bytes", len(data),
 				)
 			}

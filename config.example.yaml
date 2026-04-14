@@ -66,6 +66,13 @@ health:
 # Default (all false or stdout enabled): write to stdout.
 output:
 
+  # ── Send retry ─────────────────────────────────────────────────────────────
+  # If Send fails, the collector retries up to send_max_retry times before
+  # dropping the message and logging an error. No fallback transport is used;
+  # the program keeps running on the originally selected transport.
+  send_max_retry: 3       # 0 = no retries (fail immediately on first error)
+  send_retry_delay: 1s    # pause between retries (e.g. 500ms, 2s)
+
   # ── Stdout ─────────────────────────────────────────────────────────────────
   stdout:
     enabled: true          # write JSON metrics to stdout

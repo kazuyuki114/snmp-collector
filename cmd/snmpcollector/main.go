@@ -74,6 +74,9 @@ func run() error {
 		poolMaxIdle int
 		poolIdleSec int
 
+		outputSendMaxRetry   int
+		outputSendRetryDelay string
+
 		outputFile       string
 		outputMaxBytes   int64
 		outputMaxBackups int
@@ -130,6 +133,9 @@ func run() error {
 	flag.IntVar(&counterPurgeSec, "processor.counter.purge.interval", durToSec(cc.Processors.Counter.PurgeInterval), "Counter state GC interval in seconds (0 = disabled)")
 	flag.IntVar(&poolMaxIdle, "snmp.pool.max.idle", cc.Poller.Pool.MaxIdle, "Max idle connections per device")
 	flag.IntVar(&poolIdleSec, "snmp.pool.idle.timeout", durToSec(cc.Poller.Pool.IdleTimeout), "Idle connection timeout in seconds")
+
+	flag.IntVar(&outputSendMaxRetry, "output.send.retry.max", cc.Output.SendMaxRetry, "Retries per Send failure before dropping the message (0 = no retry)")
+	flag.StringVar(&outputSendRetryDelay, "output.send.retry.delay", cc.Output.SendRetryDelay, "Delay between Send retries (e.g. 1s, 500ms)")
 
 	flag.StringVar(&outputFile, "output.file", cc.Output.File.Path, "Write metrics to file instead of stdout (enables rotation)")
 	flag.Int64Var(&outputMaxBytes, "output.file.max-bytes", cc.Output.File.MaxBytes, "Rotate file when it exceeds this size in bytes (default 50MB)")
@@ -195,6 +201,8 @@ func run() error {
 			IdleTimeout:      secondsToDuration(poolIdleSec),
 		},
 		ConfigReloadInterval: secondsToDuration(cfgReloadSec),
+		TransportMaxRetry:    outputSendMaxRetry,
+		TransportRetryDelay:  parseDurationOrDefault(outputSendRetryDelay, time.Second),
 	}
 
 	// ── Step 4: select output transport ─────────────────────────────────────
@@ -445,4 +453,12 @@ func applyPathOverrides(p *config.Paths, devices, dgroups, ogroups, objects, enu
 
 func secondsToDuration(sec int) time.Duration {
 	return time.Duration(sec) * time.Second
+}
+
+func parseDurationOrDefault(s string, def time.Duration) time.Duration {
+	d, err := config.ParseDuration(s)
+	if err != nil || d == 0 {
+		return def
+	}
+	return d
 }
