@@ -186,6 +186,127 @@ func TestCounterState_Counter32Wrap(t *testing.T) {
 	}
 }
 
+func TestCounterState_Counter64Reset(t *testing.T) {
+	cs := metrics.NewCounterState()
+	key := metrics.CounterKey{Device: "router01", Attribute: "netif.bytes.in", Instance: "1"}
+
+	t0 := time.Now()
+	cs.Delta(key, 5_000_000_000, t0, metrics.WrapForSyntax("Counter64")) // seed
+
+	t1 := t0.Add(60 * time.Second)
+	// Counter64 dropped to 0 — device rebooted.
+	dr := cs.Delta(key, 0, t1, metrics.WrapForSyntax("Counter64"))
+
+	if !dr.Valid {
+		t.Fatal("expected Valid=true on reset")
+	}
+	if !dr.Reset {
+		t.Fatal("expected Reset=true for Counter64 decrease")
+	}
+	if dr.Delta != 0 {
+		t.Errorf("reset delta = %d, want 0 (no false spike)", dr.Delta)
+	}
+
+	// Third poll: counter now increments normally from 0.
+	t2 := t1.Add(60 * time.Second)
+	dr2 := cs.Delta(key, 12_000, t2, metrics.WrapForSyntax("Counter64"))
+	if !dr2.Valid || dr2.Reset {
+		t.Fatalf("post-reset poll: Valid=%v Reset=%v, want Valid=true Reset=false", dr2.Valid, dr2.Reset)
+	}
+	if dr2.Delta != 12_000 {
+		t.Errorf("post-reset delta = %d, want 12000", dr2.Delta)
+	}
+}
+
+func TestCounterState_Counter32ResetSmallDrop(t *testing.T) {
+	cs := metrics.NewCounterState()
+	key := metrics.CounterKey{Device: "sw01", Attribute: "netif.bytes.out", Instance: "2"}
+
+	const maxU32 = uint64(^uint32(0)) // 4294967295
+
+	t0 := time.Now()
+	cs.Delta(key, 1_000_000_000, t0, maxU32) // seed: counter at 1 B
+
+	t1 := t0.Add(60 * time.Second)
+	// Counter dropped to 0 — clearly a reset (drop = 1B ≤ maxU32/2 ≈ 2.1B).
+	dr := cs.Delta(key, 0, t1, maxU32)
+
+	if !dr.Valid {
+		t.Fatal("expected Valid=true on reset")
+	}
+	if !dr.Reset {
+		t.Fatal("expected Reset=true: drop 1B ≤ maxU32/2, should be treated as reset")
+	}
+	if dr.Delta != 0 {
+		t.Errorf("reset delta = %d, want 0 (no false spike)", dr.Delta)
+	}
+}
+
+func TestCounterState_Counter32WrapLargeDrop(t *testing.T) {
+	// Existing wrap test kept for clarity: prev near top of range → wrap, not reset.
+	cs := metrics.NewCounterState()
+	key := metrics.CounterKey{Device: "sw01", Attribute: "netif.bytes.out", Instance: "3"}
+
+	const maxU32 = uint64(^uint32(0)) // 4294967295
+
+	t0 := time.Now()
+	cs.Delta(key, maxU32-100, t0, maxU32) // prev = 4294967195
+
+	t1 := t0.Add(60 * time.Second)
+	// current = 400, drop = 4294966795 > maxU32/2 → natural wrap.
+	dr := cs.Delta(key, 400, t1, maxU32)
+
+	if !dr.Valid {
+		t.Fatal("expected Valid=true after wrap")
+	}
+	if dr.Reset {
+		t.Fatal("expected Reset=false: large drop near max should be a natural wrap")
+	}
+	// Expected delta: (maxU32 - (maxU32-100)) + 400 + 1 = 100 + 400 + 1 = 501
+	if dr.Delta != 501 {
+		t.Errorf("wrap delta = %d, want 501", dr.Delta)
+	}
+}
+
+func TestBuild_CounterReset_EmitsZeroNotSpike(t *testing.T) {
+	cs := metrics.NewCounterState()
+	t0 := time.Now()
+
+	// First poll — seed counter at 1 B (lower half of Counter32 range).
+	// A drop from this value is unambiguously a reset (drop ≤ maxU32/2).
+	decoded1 := decoder.DecodedPollResult{
+		Device:       testDevice,
+		ObjectDefKey: "IF-MIB::ifEntry",
+		CollectedAt:  t0,
+		Varbinds: []decoder.DecodedVarbind{
+			{OID: "1.3.6.1.2.1.2.2.1.10.1", AttributeName: "netif.bytes.in", Instance: "1",
+				Value: uint64(1_000_000_000), SNMPType: "Counter32", Syntax: "Counter32"},
+		},
+	}
+	metrics.Build(decoded1, metrics.BuildOptions{PollStatus: "success", Counters: cs})
+
+	// Second poll — device rebooted, counter reset to 0 (drop = 1B ≤ maxU32/2 ≈ 2.1B).
+	t1 := t0.Add(60 * time.Second)
+	decoded2 := decoder.DecodedPollResult{
+		Device:       testDevice,
+		ObjectDefKey: "IF-MIB::ifEntry",
+		CollectedAt:  t1,
+		Varbinds: []decoder.DecodedVarbind{
+			{OID: "1.3.6.1.2.1.2.2.1.10.1", AttributeName: "netif.bytes.in", Instance: "1",
+				Value: uint64(0), SNMPType: "Counter32", Syntax: "Counter32"},
+		},
+	}
+	result := metrics.Build(decoded2, metrics.BuildOptions{PollStatus: "success", Counters: cs})
+
+	m, ok := findMetric(result.Metrics, "netif.bytes.in", "1")
+	if !ok {
+		t.Fatal("metric netif.bytes.in instance=1 not found")
+	}
+	if m.Value != uint64(0) {
+		t.Errorf("counter reset: value = %v, want 0 (no false spike)", m.Value)
+	}
+}
+
 func TestCounterState_Purge(t *testing.T) {
 	cs := metrics.NewCounterState()
 	old := time.Now().Add(-2 * time.Hour)

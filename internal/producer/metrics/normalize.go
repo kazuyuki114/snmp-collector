@@ -56,6 +56,12 @@ type DeltaResult struct {
 	// Valid is false on the first observation of a key (no previous sample),
 	// or if the timestamps are equal (division by zero guard).
 	Valid bool
+
+	// Reset is true when the counter dropped in a way that indicates a device
+	// reboot or SNMP agent restart rather than a natural rollover. When Reset
+	// is true, Valid is also true and Delta is 0. Callers should suppress or
+	// zero-fill the metric to avoid false spikes in alerting systems.
+	Reset bool
 }
 
 // Delta records the current counter value and, if a previous sample exists,
@@ -66,9 +72,16 @@ type DeltaResult struct {
 //   - Pass maxCounter32 (^uint32(0) = 4294967295) for Counter32 attributes.
 //   - Pass maxCounter64 (^uint64(0)) for Counter64 attributes.
 //
-// Wrap detection: if current < previous, it is assumed the counter rolled over
-// once. Multiple wraps within a single interval are not handled (would require
-// extreme counter rates and very long polling intervals).
+// Wrap vs reset detection: if current < previous the function decides whether
+// the decrease is a natural counter rollover or a device/agent reset:
+//   - Counter64 (wrap == ^uint64(0)): always treated as a reset — Counter64
+//     would take ~46 years to wrap at 100 Gbps sustained throughput.
+//   - Counter32 (wrap == ^uint32(0)): if the drop (prev−current) exceeds half
+//     the counter range (wrap/2), the previous value was in the upper half and
+//     a natural rollover is plausible. Otherwise it is treated as a reset.
+//
+// On a reset the state is reseeded with current and DeltaResult.Reset=true is
+// returned so callers can suppress the sample and avoid false alert spikes.
 func (s *CounterState) Delta(key CounterKey, current uint64, now time.Time, wrap uint64) DeltaResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -88,8 +101,13 @@ func (s *CounterState) Delta(key CounterKey, current uint64, now time.Time, wrap
 	var delta uint64
 	if current >= prev.Value {
 		delta = current - prev.Value
+	} else if isCounterReset(prev.Value, current, wrap) {
+		// Counter reset detected (device reboot / agent restart). Emit delta=0
+		// so downstream consumers see no false spike. State is already seeded
+		// with current above, so the next interval will compute correctly.
+		return DeltaResult{Delta: 0, Elapsed: elapsed, Valid: true, Reset: true}
 	} else {
-		// Counter wrapped once. Add the distance to wrap boundary plus current.
+		// Natural counter rollover: add distance to the wrap boundary plus current.
 		delta = (wrap - prev.Value) + current + 1
 	}
 
@@ -98,6 +116,27 @@ func (s *CounterState) Delta(key CounterKey, current uint64, now time.Time, wrap
 		Elapsed: elapsed,
 		Valid:   true,
 	}
+}
+
+// isCounterReset returns true when a decrease from prev to current should be
+// interpreted as a device/agent counter reset rather than a natural rollover.
+//
+// For Counter64 (wrap == ^uint64(0)): any decrease is a reset — natural
+// Counter64 wraps are not observed in practice.
+// For Counter32 (wrap == uint64(^uint32(0))): a natural rollover produces a
+// large apparent drop because prev must have been near the counter maximum.
+// If the drop exceeds half the counter range the rollover is plausible;
+// a smaller drop indicates a reset.
+func isCounterReset(prev, current, wrap uint64) bool {
+	if wrap == ^uint64(0) {
+		// Counter64: always a reset on any decrease.
+		return true
+	}
+	// Counter32: reset when the drop is ≤ half the counter range.
+	// A genuine wrap requires prev to be in the upper half of the range,
+	// producing a drop larger than wrap/2.
+	drop := prev - current
+	return drop <= wrap/2
 }
 
 // Remove deletes all stored state for the given key. Call this when a device is
