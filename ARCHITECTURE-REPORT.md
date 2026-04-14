@@ -403,7 +403,7 @@ type CollectorConfig struct {
 
 ### YAML Examples
 
-**Device** (`testdata/devices/localhost.yml`):
+**Device** (`config/devices/localhost.yml`):
 ```yaml
 myswitch.lab:
   ip: 127.0.0.1
@@ -415,7 +415,7 @@ myswitch.lab:
   max_concurrent_polls: 2
 ```
 
-**Object Definition** (`testdata/objects/system.yml`):
+**Object Definition** (`config/objects/system.yml`):
 ```yaml
 SNMPv2-MIB::system:
   mib: SNMPv2-MIB
@@ -615,17 +615,17 @@ type Formatter interface {
 
 ### Architecture
 
-The plugin system defines two interfaces in `plugin/`:
+The plugin system defines the transport interface in `plugin/`:
 
 ```
-Input plugin ──produces──▶ Envelope ──▶ (engine formats + routes) ──▶ Transport plugin
+Internal pipeline ──formats──▶ Transport plugin
 ```
 
 **Envelope** — Standard internal message:
 
 ```go
 type Envelope struct {
-    Source    string           // Input.Name() of the producer
+    Source    string           // producer identifier
     Timestamp time.Time        // when data was collected
     Metric   *models.SNMPMetric
 }
@@ -641,11 +641,11 @@ type Envelope struct {
 ### Plugin Development
 
 Per `docs/plugin-dev-guide.md`, new plugins:
-1. Create a package under `plugin/input/<name>/` or `plugin/transport/<name>/`
-2. Implement the `plugin.Input` or `plugin.Transport` interface
+1. Create a package under `plugin/transport/<name>/`
+2. Implement the `plugin.Transport` interface
 3. Use compile-time check: `var _ plugin.Transport = (*Transport)(nil)`
 4. Accept `*slog.Logger` and `Config` struct
-5. Use `context.WithCancel` + `sync.WaitGroup` for lifecycle
+5. Ensure concurrent `Send()` safety and graceful `Close()` lifecycle
 
 ---
 
@@ -685,7 +685,7 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 | Stdout Transport | ✅ Inline writer in app.go | `pkg/snmpcollector/app/app.go` |
 | File Transport | ✅ With size-based rotation | `plugin/transport/file/` |
 | **Kafka Transport** | ✅ Batching, TLS, SASL, compression | `plugin/transport/kafka/` |
-| Plugin Architecture | ✅ Input + Transport interfaces | `plugin/` |
+| Plugin Architecture | ✅ Transport interface | `plugin/` |
 | YAML Config Hierarchy | ✅ 5-directory model with env var paths | `pkg/snmpcollector/config/` |
 | Collector Process Config | ✅ YAML with output `enabled` flags | `pkg/snmpcollector/config/collector_config.go` |
 | SNMPv1/v2c/v3 | ✅ Including USM auth/priv | `pkg/snmpcollector/poller/session.go` |
@@ -727,7 +727,6 @@ The **polling pipeline is fully implemented and production-ready**: Config → S
 | `models/config.go` | `models` | 83 | `ObjectDefinition`, `IndexDefinition`, `AttributeDefinition`, `OverrideReference` |
 | `models/metric.go` | `models` | 52 | `SNMPMetric`, `Device`, `Metric`, `MetricMetadata` |
 | `plugin/envelope.go` | `plugin` | 47 | `Envelope`, `Valid()` |
-| `plugin/input.go` | `plugin` | 44 | `Input` interface |
 | `plugin/transport.go` | `plugin` | 40 | `Transport` interface |
 | `plugin/transport/file/file.go` | `file` | 117 | `Transport` (implements `plugin.Transport`), `Config`, `New()` |
 | `plugin/transport/file/rotate.go` | `file` | 207 | `RotatingFile`, `RotateConfig`, `NewRotatingFile()` |
