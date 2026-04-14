@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -118,6 +119,8 @@ func run() error {
 		cfgObjectGroups string
 		cfgObjects      string
 		cfgEnums        string
+
+		maxProcs int
 	)
 
 	// -config is registered so it appears in -help and does not produce an
@@ -176,12 +179,17 @@ func run() error {
 	flag.StringVar(&cfgObjects, "config.objects", cc.ConfigPaths.Objects, "Override INPUT_SNMP_OBJECT_DEFINITIONS_DIRECTORY_PATH")
 	flag.StringVar(&cfgEnums, "config.enums", cc.ConfigPaths.Enums, "Override PROCESSOR_SNMP_ENUM_DEFINITIONS_DIRECTORY_PATH")
 	flag.StringVar(&healthAddr, "health.addr", cc.Health.Addr, "Address to expose /health endpoint (e.g. :8080); disabled if empty")
+	flag.IntVar(&maxProcs, "runtime.gomaxprocs", cc.MaxProcs, "Number of OS threads (GOMAXPROCS); 0 = all CPUs")
 
 	flag.BoolVar(&haEnable, "ha.enable", cc.HA.Enabled, "Enable Active/Standby HA manager")
 	flag.StringVar(&haRole, "ha.role", cc.HA.Role, "HA role for this node: primary (DC) or standby (DR)")
 	flag.StringVar(&haPeerURL, "ha.peer.url", cc.HA.PeerURL, "Base HTTP URL of the peer node")
 
 	flag.Parse()
+
+	if maxProcs > 0 {
+		runtime.GOMAXPROCS(maxProcs)
+	}
 
 	// ── Step 3: build the application (identical to before) ─────────────────
 

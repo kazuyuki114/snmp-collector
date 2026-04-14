@@ -353,6 +353,7 @@ type CollectorConfig struct {
         Format string // json|text
     }
     CollectorID string
+    MaxProcs int // runtime GOMAXPROCS cap; 0 means Go default
     Pipeline struct {
         BufferSize     int
         DecodeWorkers  int
@@ -450,10 +451,11 @@ Priority (highest → lowest): CLI flag > YAML file > hardcoded default
 1. **Pre-scan** `os.Args` for `-config` before `flag.Parse()` (YAML loaded first so values become flag defaults)
 2. **Register all flags** with YAML-derived defaults
 3. **`flag.Parse()`** — CLI flags override YAML values
-4. **Select output transport** (see logic below)
-5. **Build and start** `app.App` with merged config
-6. **Optional health server** on `-health.addr` (default `:9080`)
-7. **Block** on `SIGINT`/`SIGTERM` then cascade shutdown
+4. **Apply runtime thread cap** (`runtime.GOMAXPROCS`) when `-runtime.gomaxprocs > 0`
+5. **Select output transport** (see logic below)
+6. **Build and start** `app.App` with merged config
+7. **Optional health server** on `-health.addr` (default `:9080`)
+8. **Block** on `SIGINT`/`SIGTERM` then cascade shutdown
 
 **Output transport selection logic:**
 
@@ -610,12 +612,53 @@ type Formatter interface {
 - Non-blocking `Send()` — drops message if internal channel full
 - Config: `Brokers`, `Topic`, `MaxEvents` (default 1000), `FlushInterval` (default 5s), `BufferSize` (default 10000), `RequiredAcks`, `Compression`, `Version`
 
-### 8.8 Health Server (`pkg/snmpcollector/health/server.go`, 68 lines)
+### 8.8 Health Server (`internal/health/server.go`, 68 lines)
 
 - HTTP server exposing `GET /health`
 - Returns `200 OK` with JSON body `{"status":"ok","collector_id":"...","uptime_s":...}`
 - Enabled via `-health.addr :9080` (or `health.addr` in YAML)
+- In HA mode, the same server also hosts `POST /demote` for failback
 - Graceful shutdown via `Stop(ctx)`
+
+### 8.9 High Availability Manager (`internal/ha/ha.go`, ~450 lines)
+
+The HA package implements an **Active/Standby control plane** that sits above
+the collector pipeline. It does not replace the pipeline; instead it decides
+when `app.Start()` and `app.Stop()` should be called.
+
+**Roles and state:**
+
+| Role | Runtime state | Behaviour |
+|---|---|---|
+| `primary` | starts Active | best-effort `POST /demote` to the peer on startup, then claims Active unconditionally |
+| `standby` | starts Standby | polls peer `GET /health`, promotes to Active after repeated failures |
+
+**Configuration:**
+
+| Field | Default | Notes |
+|---|---|---|
+| `ha.enabled` | `false` | Enables the HA manager |
+| `ha.role` | `primary` | `primary` or `standby` |
+| `ha.peer_url` | `""` | Base URL of the peer health server |
+| `ha.health_check_interval` | `5s` | Standby poll interval |
+| `ha.health_check_timeout` | `5s` | Per-request timeout for peer health checks |
+| `ha.failover_threshold` | `3` | Consecutive failures required to promote |
+| `ha.demote_timeout` | `30s` | Timeout for the Primary's `POST /demote` call |
+
+**Startup and failover flow:**
+
+1. `cmd/snmpcollector/main.go` creates the app with a `TransportFactory` so a
+    fresh transport is built after each failover/failback cycle.
+2. The health server is started before the HA manager so `/health` and
+    `/demote` are available before the first peer checks begin.
+3. `ha.OnStartPolling()` starts the collector pipeline.
+4. `ha.OnStopPolling()` stops the pipeline and drains in-flight work.
+5. The Primary preempts the Standby on every startup; the Standby takes over
+    automatically after repeated health-check failures.
+
+**Operational guarantee:** the `/demote` handler returns only after the
+Standby has transitioned back to idle and stopped polling, so the Primary can
+resume without overlapping collectors.
 
 ---
 
@@ -696,11 +739,12 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 | Plugin Architecture | ✅ Transport interface | `plugin/` |
 | YAML Config Hierarchy | ✅ 5-directory model with env var paths | `pkg/snmpcollector/config/` |
 | Collector Process Config | ✅ YAML with output `enabled` flags | `pkg/snmpcollector/config/collector_config.go` |
+| High Availability Control Plane | ✅ Active/Standby manager with `/demote` failback and peer health checks | `internal/ha/ha.go`, `cmd/snmpcollector/main.go` |
 | SNMPv1/v2c/v3 | ✅ Including USM auth/priv | `pkg/snmpcollector/poller/session.go` |
 | Hot Reload | ✅ `Scheduler.Reload()` and `App.Reload()` | Both |
 | Graceful Shutdown | ✅ Signal handling, cascading channel close | `cmd/snmpcollector/main.go`, `app.go` |
 | Connection Pool | ✅ Per-device, LIFO, idle timeout, concurrency limit | `pkg/snmpcollector/poller/pool.go` |
-| Health Endpoint | ✅ HTTP `/health` with uptime and collector ID | `pkg/snmpcollector/health/server.go` |
+| Health Endpoint | ✅ HTTP `/health` with uptime and collector ID; shared host for `/demote` in HA mode | `pkg/snmpcollector/health/server.go` |
 
 ### Not Implemented (Planned in Spec)
 
@@ -723,11 +767,15 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 
 The **polling pipeline is fully implemented and production-ready**: Config → Scheduler → Poller → Decoder → Producer → Formatter → Transport (stdout / file / Kafka). Two output formats are supported: custom JSON and OpenTelemetry OTLP JSON. The MIB tooling layer is also unimplemented — the system relies on hand-authored YAML object definitions instead of dynamic MIB parsing.
 
+The collector also includes an optional **Active/Standby HA control plane**:
+the Primary preempts the Standby on startup, the Standby fails over after peer
+health-check failures, and failback is coordinated through `POST /demote`.
+
 ---
 
 ## 12. File-by-File Inventory
 
-### Go Source Files (31 files)
+### Go Source Files (32 files)
 
 | File | Package | Lines | Key Exports |
 |---|---|---|---|
@@ -753,7 +801,8 @@ The **polling pipeline is fully implemented and production-ready**: Config → S
 | `pkg/snmpcollector/config/collector_config.go` | `config` | ~290 | `CollectorConfig` (incl. Format.OTel/OTelScopeName/OTelScopeVersion), `DefaultCollectorConfig()`, `LoadCollectorConfig()` |
 | `pkg/snmpcollector/config/device.go` | `config` | 85 | `DeviceConfig`, `V3Credentials`, `DeviceGroup`, `ObjectGroup` |
 | `pkg/snmpcollector/config/loader.go` | `config` | 615 | `Paths`, `PathsFromEnv()`, `LoadedConfig`, `Load()` |
-| `pkg/snmpcollector/health/server.go` | `health` | 68 | `Server`, `NewServer()`, `Start()`, `Stop()` |
+| `internal/health/server.go` | `health` | 68 | `Server`, `NewServer()`, `Start()`, `Stop()` |
+| `internal/ha/ha.go` | `ha` | ~450 | `Role`, `State`, `Config`, `New()`, `Start()`, `Stop()`, `DemoteHandler()` |
 | `pkg/snmpcollector/poller/poller.go` | `poller` | 227 | `Poller` interface, `PollJob`, `SNMPPoller`, `Poll()`, `LowestCommonOID()` |
 | `pkg/snmpcollector/poller/pool.go` | `poller` | 249 | `ConnectionPool`, `PoolOptions`, `NewConnectionPool()`, `Get()`, `Put()`, `Discard()`, `Close()` |
 | `pkg/snmpcollector/poller/session.go` | `poller` | 128 | `NewSession()`, `mapAuthProto()`, `mapPrivProto()`, `snmpv3MsgFlags()` |
@@ -762,7 +811,7 @@ The **polling pipeline is fully implemented and production-ready**: Config → S
 | `pkg/snmpcollector/scheduler/resolve.go` | `scheduler` | 88 | `ResolveJobs()` |
 | `internal/noop/noop.go` | `noop` | 9 | `Writer{}` — no-op io.Writer for test loggers |
 
-**Total: ~6,050 lines of Go source code** (excluding tests)
+**Total: ~6,500 lines of Go source code** (excluding tests)
 
 ### Import Dependency Graph
 

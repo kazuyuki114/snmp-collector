@@ -112,6 +112,10 @@ type CollectorConfig struct {
 	// Defaults to the system hostname when empty.
 	CollectorID string `yaml:"collector_id"`
 
+	// MaxProcs sets the number of OS threads the Go runtime may use (GOMAXPROCS).
+	// 0 means use all available CPU cores (default Go behaviour).
+	MaxProcs int `yaml:"max_procs"`
+
 	Pipeline struct {
 		BufferSize     int `yaml:"buffer_size"`
 		DecodeWorkers  int `yaml:"decode_workers"`
@@ -289,6 +293,7 @@ func DefaultCollectorConfig() *CollectorConfig {
 	c := &CollectorConfig{}
 	c.Log.Level = "info"
 	c.Log.Format = "json"
+	c.MaxProcs = 0 // 0 = all CPUs (runtime default)
 	c.Pipeline.BufferSize = 10_000
 	c.Pipeline.DecodeWorkers = 1
 	c.Pipeline.ProduceWorkers = 1

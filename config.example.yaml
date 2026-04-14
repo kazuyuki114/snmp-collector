@@ -20,6 +20,9 @@ log:
 # ── Identity ─────────────────────────────────────────────────────────────────
 collector_id: ""  # defaults to system hostname when empty
 
+# ── Runtime ──────────────────────────────────────────────────────────────────
+max_procs: 0       # 0 = use all CPU cores (default); >0 sets GOMAXPROCS
+
 # ── Pipeline ─────────────────────────────────────────────────────────────────
 pipeline:
   buffer_size: 10000      # capacity of each inter-stage channel

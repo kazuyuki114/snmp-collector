@@ -7,23 +7,30 @@ both. When both are provided, CLI flags always win.
 
 ## Table of Contents
 
-- [Priority Chain](#priority-chain)
-- [Using a Config File](#using-a-config-file)
-- [Complete Field Reference](#complete-field-reference)
-  - [log](#log)
-  - [collector\_id](#collector_id)
-  - [pipeline](#pipeline)
-  - [poller](#poller)
-  - [processors](#processors)
-  - [format](#format)
-  - [config\_reload\_interval](#config_reload_interval)
-  - [config\_paths](#config_paths)
-  - [health](#health)
-  - [output](#output)
-- [CLI Flags Reference](#cli-flags-reference)
-- [Output Transport Selection](#output-transport-selection)
-- [Environment Variables](#environment-variables)
-- [Annotated Example File](#annotated-example-file)
+- [Collector Configuration](#collector-configuration)
+  - [Table of Contents](#table-of-contents)
+  - [Priority Chain](#priority-chain)
+  - [Using a Config File](#using-a-config-file)
+  - [Complete Field Reference](#complete-field-reference)
+    - [log](#log)
+    - [collector\_id](#collector_id)
+    - [max\_procs](#max_procs)
+    - [pipeline](#pipeline)
+    - [poller](#poller)
+    - [processors](#processors)
+    - [format](#format)
+    - [config\_reload\_interval](#config_reload_interval)
+    - [config\_paths](#config_paths)
+    - [health](#health)
+    - [ha](#ha)
+    - [output](#output)
+      - [output.send](#outputsend)
+      - [output.kafka](#outputkafka)
+      - [output.file](#outputfile)
+  - [CLI Flags Reference](#cli-flags-reference)
+  - [Output Transport Selection](#output-transport-selection)
+  - [Environment Variables](#environment-variables)
+  - [Annotated Example File](#annotated-example-file)
 
 ---
 
@@ -97,6 +104,23 @@ collector_id: "dc1-collector-01"
 
 Identifies this collector instance in every metric's `metadata.collector_id`
 field. Defaults to the system hostname when empty.
+
+---
+
+### max_procs
+
+Controls the Go runtime thread cap (`GOMAXPROCS`) for this process.
+
+```yaml
+max_procs: 0
+```
+
+| Type | Default | CLI flag |
+|---|---|---|
+| `int` | `0` | `-runtime.gomaxprocs` |
+
+- `0` means use Go's default behavior (all available CPU cores).
+- A positive value sets a hard cap on OS threads used by the runtime.
 
 ---
 
@@ -260,6 +284,41 @@ health:
 
 Empty string disables the endpoint entirely.
 
+In HA deployments, this server also hosts the `/demote` endpoint used by the
+peer's failback logic, so keep it enabled on both nodes.
+
+---
+
+### ha
+
+Controls the optional Active/Standby high-availability manager. See
+[ha.md](ha.md) for the full state-machine description and wiring details.
+
+| Field | Type | Default | CLI flag |
+|---|---|---|---|
+| `ha.enabled` | `bool` | `false` | `-ha.enable` |
+| `ha.role` | `string` | `primary` | `-ha.role` |
+| `ha.peer_url` | `string` | `""` | `-ha.peer.url` |
+| `ha.health_check_interval` | `duration` | `5s` | none |
+| `ha.health_check_timeout` | `duration` | `5s` | none |
+| `ha.failover_threshold` | `int` | `3` | none |
+| `ha.demote_timeout` | `duration` | `30s` | none |
+
+```yaml
+ha:
+  enabled: true
+  role: primary
+  peer_url: "http://127.0.0.1:9081"
+  health_check_interval: 5s
+  health_check_timeout: 5s
+  failover_threshold: 3
+  demote_timeout: 30s
+```
+
+The collector only exposes CLI flags for `enabled`, `role`, and `peer_url`.
+The timing fields are YAML-only and inherit the defaults shown above when
+omitted.
+
 ---
 
 ### output
@@ -332,6 +391,7 @@ for duration fields; the YAML accepts Go duration strings (`30s`, `5m`, etc.).
 | `-log.level` | `log.level` | `info` |
 | `-log.fmt` | `log.format` | `json` |
 | `-collector.id` | `collector_id` | hostname |
+| `-runtime.gomaxprocs` | `max_procs` | `0` |
 | `-format.pretty` | `format.pretty` | `false` |
 | `-format.otel` | `format.otel` | `false` |
 | `-format.otel.scope-name` | `format.otel_scope_name` | `snmp-collector` |
@@ -352,6 +412,9 @@ for duration fields; the YAML accepts Go duration strings (`30s`, `5m`, etc.).
 | `-config.objects` | `config_paths.objects` | env / default |
 | `-config.enums` | `config_paths.enums` | env / default |
 | `-health.addr` | `health.addr` | `""` |
+| `-ha.enable` | `ha.enabled` | `false` |
+| `-ha.role` | `ha.role` | `primary` |
+| `-ha.peer.url` | `ha.peer_url` | `""` |
 | `-output.send.retry.max` | `output.send_max_retry` | `3` |
 | `-output.send.retry.delay` | `output.send_retry_delay` | `1s` |
 | `-output.file` | `output.file.path` | `""` |
@@ -428,6 +491,9 @@ log:
 # ── Identity ──────────────────────────────────────────────────────────────────
 collector_id: ""  # defaults to system hostname
 
+# ── Runtime ───────────────────────────────────────────────────────────────────
+max_procs: 0       # 0 = use all CPUs (Go default); >0 = explicit GOMAXPROCS cap
+
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 pipeline:
   buffer_size: 10000
@@ -472,6 +538,16 @@ config_paths:
 # ── Health check ──────────────────────────────────────────────────────────────
 health:
   addr: ""           # e.g. ":8080"
+
+# ── High availability ────────────────────────────────────────────────────────
+ha:
+  enabled: false
+  role: primary
+  peer_url: ""
+  health_check_interval: 5s
+  health_check_timeout: 5s
+  failover_threshold: 3
+  demote_timeout: 30s
 
 # ── Output ────────────────────────────────────────────────────────────────────
 output:

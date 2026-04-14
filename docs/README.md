@@ -32,11 +32,15 @@ development without any extra setup.
   -config.object.groups=./config/object_groups \
   -config.objects=./config/objects \
   -config.enums=./config/enums \
+  -runtime.gomaxprocs=4 \
   -log.level=debug \
   -log.fmt=text \
   -format.pretty \
   -poller.workers=2
 ```
+
+Use `-runtime.gomaxprocs` (or `max_procs` in YAML) to cap Go runtime thread
+usage. `0` keeps the default behavior (all available CPU cores).
 
 ### Run with Kafka output
 
@@ -106,6 +110,12 @@ Scheduler → WorkerPool → [rawCh] → Decoder (N) → [decodedCh] →
 Producer (N) → [metricCh] → Formatter → [formattedCh] → Transport
 ```
 
+The pipeline can also run in an optional Active/Standby HA mode. In that mode
+the collector adds a small control plane around the pipeline: the Primary
+preempts the Standby with `POST /demote`, the Standby monitors the peer's
+`GET /health`, and failback happens only when the Primary comes back and asks
+the Standby to yield.
+
 ### Plugin interfaces (`plugin/`)
 
 | Interface | Description |
@@ -159,6 +169,7 @@ error is logged.
 | Document | What it covers |
 |---|---|
 | [configuration.md](configuration.md) | YAML config file format, all fields, CLI flags table, environment variables, priority chain |
+| [ha.md](ha.md) | Active/Standby HA manager, state machine, failover/failback wiring, deployment notes |
 | [kafka-transport.md](kafka-transport.md) | Kafka transport architecture, batching/flush model, TLS, SASL, concurrency contract, error handling |
 | [models.md](models.md) | Core data structures (`SNMPMetric`, `Device`, `Metric`), configuration types (`ObjectDefinition`, `AttributeDefinition`), design constraints |
 | [decoder.md](decoder.md) | SNMP response decoder — pipeline position, `RawPollResult` / `DecodedPollResult` channel types, `VarbindParser` OID matching, `ConvertValue` syntax-to-Go-type table, error handling, usage examples |
@@ -183,5 +194,7 @@ error is logged.
 [10] plugin/                          — Transport interface
 [11] plugin/transport/file/           — File transport (rotation)
 [12] plugin/transport/kafka/          — Kafka transport (batching, TLS, SASL)
-[13] cmd/snmpcollector/               — binary entry point
+[13] internal/ha/                     — Active/Standby HA manager
+[14] internal/health/                 — health server and /demote host mux
+[15] cmd/snmpcollector/               — binary entry point
 ```

@@ -10,6 +10,9 @@ log:
 
 collector_id: "dev-collector-01"
 
+# Number of OS threads the Go runtime may use (GOMAXPROCS).
+max_procs: 0
+
 pipeline:
   buffer_size: 1000
   decode_workers: 50
