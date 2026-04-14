@@ -21,12 +21,12 @@ import (
 	"syscall"
 	"time"
 
-	"snmp/snmp-collector/pkg/snmpcollector/app"
-	"snmp/snmp-collector/pkg/snmpcollector/config"
-	"snmp/snmp-collector/pkg/snmpcollector/health"
-	"snmp/snmp-collector/pkg/snmpcollector/poller"
-	filetransport "snmp/snmp-collector/plugin/transport/file"
-	kafkatransport "snmp/snmp-collector/plugin/transport/kafka"
+	"snmp/snmp-collector/internal/app"
+	"snmp/snmp-collector/internal/config"
+	"snmp/snmp-collector/internal/health"
+	"snmp/snmp-collector/internal/poller"
+	filetransport "snmp/snmp-collector/internal/plugin/transport/file"
+	kafkatransport "snmp/snmp-collector/internal/plugin/transport/kafka"
 )
 
 func main() {
