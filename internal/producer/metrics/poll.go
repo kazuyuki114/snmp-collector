@@ -126,9 +126,16 @@ func Build(decoded decoder.DecodedPollResult, opts BuildOptions) models.SNMPMetr
 						Instance:  instance,
 					}
 					dr := opts.Counters.Delta(key, raw, now, WrapForSyntax(vb.Syntax))
-					if dr.Valid {
+					switch {
+					case dr.Reset:
+						// Counter reset (device reboot / agent restart): emit 0
+						// so the downstream alerting system sees no false spike.
+						// The counter state has been reseeded; the next interval
+						// will produce a correct delta.
+						value = uint64(0)
+					case dr.Valid:
 						value = dr.Delta
-					} else {
+					default:
 						value = uint64(0) // first observation: emit 0 so the metric exists
 					}
 				}
