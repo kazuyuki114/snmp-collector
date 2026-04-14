@@ -6,7 +6,7 @@ import (
 
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/producer/metrics"
-	"snmp/snmp-collector/snmp/decoder"
+	"snmp/snmp-collector/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

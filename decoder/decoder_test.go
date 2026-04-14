@@ -8,7 +8,7 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 	"snmp/snmp-collector/models"
-	"snmp/snmp-collector/snmp/decoder"
+	"snmp/snmp-collector/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

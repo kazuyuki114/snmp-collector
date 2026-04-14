@@ -713,7 +713,7 @@ Comparing `SNMP-Architecture.md` (the original spec) against actual code:
 
 ### Summary
 
-The **polling pipeline is fully implemented and production-ready**: Config → Scheduler → Poller → Decoder → Producer → Formatter → Transport (stdout / file / Kafka). Two output formats are supported: custom JSON and OpenTelemetry OTLP JSON. The **trap collection side is entirely unimplemented**. The MIB tooling layer is also unimplemented — the system relies on hand-authored YAML object definitions instead of dynamic MIB parsing.
+The **polling pipeline is fully implemented and production-ready**: Config → Scheduler → Poller → Decoder → Producer → Formatter → Transport (stdout / file / Kafka). Two output formats are supported: custom JSON and OpenTelemetry OTLP JSON. The MIB tooling layer is also unimplemented — the system relies on hand-authored YAML object definitions instead of dynamic MIB parsing.
 
 ---
 
@@ -813,4 +813,4 @@ Two output formats are available, selected by `format.otel` in the collector con
 - Rich type conversion (50+ SNMP syntax types)
 - Enum resolution (integer/bitmap/OID), counter delta computation with wrap detection
 - Config hot-reload, graceful cascade shutdown, and an HTTP health endpoint
-- ~6,050 lines of Go source code
+

@@ -6,7 +6,7 @@ import (
 
 	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/models"
-	"snmp/snmp-collector/snmp/decoder"
+	"snmp/snmp-collector/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

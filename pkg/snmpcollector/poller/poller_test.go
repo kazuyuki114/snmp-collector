@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gosnmp/gosnmp"
+	"snmp/snmp-collector/decoder"
 	"snmp/snmp-collector/models"
 	"snmp/snmp-collector/pkg/snmpcollector/config"
 	"snmp/snmp-collector/pkg/snmpcollector/poller"
-	"snmp/snmp-collector/snmp/decoder"
+
+	"github.com/gosnmp/gosnmp"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

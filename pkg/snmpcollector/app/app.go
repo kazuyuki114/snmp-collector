@@ -27,7 +27,7 @@ import (
 	"snmp/snmp-collector/pkg/snmpcollector/scheduler"
 	"snmp/snmp-collector/plugin"
 	"snmp/snmp-collector/producer/metrics"
-	"snmp/snmp-collector/snmp/decoder"
+	"snmp/snmp-collector/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

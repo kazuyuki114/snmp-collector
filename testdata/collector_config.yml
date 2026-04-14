@@ -12,14 +12,14 @@ collector_id: "dev-collector-01"
 
 pipeline:
   buffer_size: 1000
-  decode_workers: 1
-  produce_workers: 1
+  decode_workers: 50
+  produce_workers: 50
 
 poller:
-  workers: 50
+  workers: 300
   pool:
-    max_idle: 2
-    idle_timeout: 30s
+    max_idle: 3
+    idle_timeout: 120s
 
 processors:
   enum:
