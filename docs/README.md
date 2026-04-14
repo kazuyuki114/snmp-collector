@@ -162,7 +162,7 @@ output.kafka.brokers non-empty?  →  Kafka transport
 | [formatter.md](formatter.md) | Formatters — `Formatter` interface; JSON formatter (custom schema, pretty-print); OTel formatter (OTLP JSON, resource/scope/metric mapping, unit table) |
 | [poller.md](poller.md) | SNMP poller — `Poller` interface, `ConnectionPool`, `WorkerPool`, session factory, operation selection (Get/Walk/BulkWalk), concurrency contract |
 | [scheduler.md](scheduler.md) | Polling scheduler — `Scheduler`, `JobSubmitter` interface, `ResolveJobs()` config hierarchy resolution, timer management, hot reload |
-| [plugin-dev-guide.md](plugin-dev-guide.md) | Writing new Transport plugins — interfaces, package layout, step-by-step guide, design rules |
+| [plugin.md](plugin.md) | Writing new Transport plugins — interfaces, package layout, step-by-step guide, design rules |
 
 ## Pipeline stages (build order)
 

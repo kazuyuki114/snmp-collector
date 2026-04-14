@@ -640,7 +640,7 @@ type Envelope struct {
 
 ### Plugin Development
 
-Per `docs/plugin-dev-guide.md`, new plugins:
+Per `docs/plugin.md`, new plugins:
 1. Create a package under `plugin/transport/<name>/`
 2. Implement the `plugin.Transport` interface
 3. Use compile-time check: `var _ plugin.Transport = (*Transport)(nil)`
