@@ -1,14 +1,10 @@
-// Package plugin defines the core abstractions for the SNMP Collector's
-// Telegraf-style plugin architecture. Every Input and Transport plugin depends
-// on this package; nothing here depends on any other internal package except
-// [models].
+// Package plugin defines the core abstractions for the SNMP Collector plugin
+// surface. This package is intentionally small and currently exposes:
 //
-// The package provides three things:
+//  1. [Envelope] — the internal message shape used between pipeline stages.
+//  2. [Transport] — the interface every output/delivery plugin must implement.
 //
-//  1. [Envelope] — the standard internal message that flows from Input plugins
-//     through the pipeline (decode → produce → format) to Transport plugins.
-//  2. [Input] — the interface every data-collection plugin must implement.
-//  3. [Transport] — the interface every output/delivery plugin must implement.
+// Nothing here depends on any other internal package except [models].
 package plugin
 
 import (
@@ -17,19 +13,15 @@ import (
 	"snmp/snmp-collector/models"
 )
 
-// Envelope is the standardised internal message that flows from Input plugins
-// through the pipeline to Transport plugins.
-//
-// Inputs produce Envelopes; the engine/broker loop collects them from all
-// active Inputs via a shared channel and fans them out to every configured
-// Transport after formatting.
+// Envelope is the standardised internal message that flows through the
+// collection pipeline before formatting and transport delivery.
 //
 // The zero value is not useful — callers should always set at least Source,
 // Timestamp, and Metric.
 type Envelope struct {
-	// Source is the Name() of the Input plugin that produced this message.
-	// It allows downstream stages (formatters, transports, routers) to
-	// discriminate by origin without inspecting the payload.
+	// Source identifies the producer of this message (for example,
+	// "snmp_poller"). Downstream stages can use it for attribution without
+	// inspecting the payload.
 	Source string
 
 	// Timestamp records when the data was collected (not when it entered the

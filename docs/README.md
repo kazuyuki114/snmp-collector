@@ -16,22 +16,22 @@ go build -o snmpcollector ./cmd/snmpcollector/
 ### Run with a config file (recommended)
 
 ```bash
-./snmpcollector -config testdata/collector_config.yml
+./snmpcollector -config config/collector_config.yml
 ```
 
-The sample file at `testdata/collector_config.yml` points `config_paths` at the
-`testdata/` directories and outputs pretty-printed JSON to stdout — useful for
+The sample file at `config/collector_config.yml` points `config_paths` at the
+`config/` directories and outputs pretty-printed JSON to stdout — useful for
 development without any extra setup.
 
 ### Run with flags only
 
 ```bash
 ./snmpcollector \
-  -config.devices=./testdata/devices \
-  -config.device.groups=./testdata/device_groups \
-  -config.object.groups=./testdata/object_groups \
-  -config.objects=./testdata/objects \
-  -config.enums=./testdata/enums \
+  -config.devices=./config/devices \
+  -config.device.groups=./config/device_groups \
+  -config.object.groups=./config/object_groups \
+  -config.objects=./config/objects \
+  -config.enums=./config/enums \
   -log.level=debug \
   -log.fmt=text \
   -format.pretty \
@@ -42,7 +42,7 @@ development without any extra setup.
 
 ```bash
 ./snmpcollector \
-  -config testdata/collector_config.yml \
+  -config config/collector_config.yml \
   -output.kafka.brokers broker1:9092,broker2:9092 \
   -output.kafka.topic   snmp-metrics
 ```
@@ -66,7 +66,7 @@ output:
 ### Device configuration
 
 Each device is defined in a YAML file under the devices directory.
-Example `testdata/devices/localhost.yml`:
+Example `config/devices/localhost.yml`:
 
 ```yaml
 myswitch.lab:

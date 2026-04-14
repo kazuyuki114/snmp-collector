@@ -1,8 +1,8 @@
 # Sample collector configuration for local testing.
-# Points config_paths at the sibling testdata directories so the binary
+# Points config_paths at the sibling config directories so the binary
 # can be run from the repo root without any environment variables:
 #
-#   snmpcollector -config testdata/collector_config.yml
+#   snmpcollector -config config/collector_config.yml
 
 log:
   level: info
@@ -36,11 +36,11 @@ format:
 config_reload_interval: 100s
 
 config_paths:
-  devices:       testdata/devices
-  device_groups: testdata/device_groups
-  object_groups: testdata/object_groups
-  objects:       testdata/objects
-  enums:         testdata/enums
+  devices:       config/devices
+  device_groups: config/device_groups
+  object_groups: config/object_groups
+  objects:       config/objects
+  enums:         config/enums
 
 health:
   addr: ":9080"
