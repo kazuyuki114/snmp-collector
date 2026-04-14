@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"snmp/snmp-collector/internal/noop"
-	"snmp/snmp-collector/snmp/decoder"
+	"snmp/snmp-collector/decoder"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
