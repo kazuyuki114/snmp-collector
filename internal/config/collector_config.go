@@ -170,6 +170,12 @@ type CollectorConfig struct {
 		Addr string `yaml:"addr"` // e.g. ":8080"; empty disables
 	} `yaml:"health"`
 
+	// HA configures the Active/Standby High Availability manager.
+	// When enabled, the manager drives app start/stop; the app is not started
+	// directly on launch. Set enabled: false (the default) to run as a
+	// standalone collector without HA.
+	HA CollectorHAConfig `yaml:"ha"`
+
 	Output struct {
 		Stdout CollectorStdoutConfig `yaml:"stdout"`
 		File   CollectorFileConfig   `yaml:"file"`
@@ -184,6 +190,45 @@ type CollectorConfig struct {
 		// Default: "1s".
 		SendRetryDelay string `yaml:"send_retry_delay"`
 	} `yaml:"output"`
+}
+
+// CollectorHAConfig holds settings for the Active/Standby HA manager.
+//
+// Example YAML:
+//
+//	ha:
+//	  enabled: true
+//	  role: primary              # primary | standby
+//	  peer_url: "http://10.0.0.2:9080"
+//	  health_check_interval: 5s
+//	  health_check_timeout: 5s
+//	  failover_threshold: 3
+//	  demote_timeout: 30s
+type CollectorHAConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Role is "primary" (DC, preferred) or "standby" (DR).
+	Role string `yaml:"role"`
+
+	// PeerURL is the base HTTP URL of the peer node, e.g. "http://10.0.0.2:9080".
+	PeerURL string `yaml:"peer_url"`
+
+	// HealthCheckInterval is how often the Standby polls GET /health on the peer.
+	// e.g. "5s". Default: "5s".
+	HealthCheckInterval string `yaml:"health_check_interval"`
+
+	// HealthCheckTimeout is the per-request HTTP timeout for health checks.
+	// e.g. "5s". Default: "5s".
+	HealthCheckTimeout string `yaml:"health_check_timeout"`
+
+	// FailoverThreshold is the number of consecutive health-check failures
+	// before the Standby promotes itself to Active. Default: 3.
+	FailoverThreshold int `yaml:"failover_threshold"`
+
+	// DemoteTimeout is the HTTP client timeout for the POST /demote call
+	// the Primary sends to the Standby on startup. Must be long enough for
+	// the Standby's pipeline to fully drain. e.g. "30s". Default: "30s".
+	DemoteTimeout string `yaml:"demote_timeout"`
 }
 
 // CollectorStdoutConfig holds settings for the stdout output transport.
@@ -201,18 +246,18 @@ type CollectorFileConfig struct {
 
 // CollectorKafkaConfig holds settings for the Kafka output transport.
 type CollectorKafkaConfig struct {
-	Enabled       bool              `yaml:"enabled"`
-	Brokers       []string          `yaml:"brokers"`
-	Topic         string            `yaml:"topic"`
-	MaxEvents     int               `yaml:"max_events"`
-	FlushInterval string            `yaml:"flush_interval"` // e.g. "5s"
-	BufferSize    int               `yaml:"buffer_size"`
-	ClientID      string            `yaml:"client_id"`
-	RequiredAcks  string            `yaml:"required_acks"` // none|local|all
-	MaxRetry      int               `yaml:"max_retry"`
-	Compression   string            `yaml:"compression"` // none|gzip|snappy|lz4|zstd
-	Version       string            `yaml:"version"`
-	TLS           CollectorKafkaTLS `yaml:"tls"`
+	Enabled       bool               `yaml:"enabled"`
+	Brokers       []string           `yaml:"brokers"`
+	Topic         string             `yaml:"topic"`
+	MaxEvents     int                `yaml:"max_events"`
+	FlushInterval string             `yaml:"flush_interval"`
+	BufferSize    int                `yaml:"buffer_size"`
+	ClientID      string             `yaml:"client_id"`
+	RequiredAcks  string             `yaml:"required_acks"` // none|local|all
+	MaxRetry      int                `yaml:"max_retry"`
+	Compression   string             `yaml:"compression"` // none|gzip|snappy|lz4|zstd
+	Version       string             `yaml:"version"`
+	TLS           CollectorKafkaTLS  `yaml:"tls"`
 	SASL          CollectorKafkaSASL `yaml:"sasl"`
 }
 
@@ -253,6 +298,10 @@ func DefaultCollectorConfig() *CollectorConfig {
 	c.Processors.Counter.DeltaEnable = true
 	c.Processors.Counter.PurgeInterval = "5m"
 	c.ConfigReloadInterval = "0s"
+	c.HA.HealthCheckInterval = "5s"
+	c.HA.HealthCheckTimeout = "5s"
+	c.HA.FailoverThreshold = 3
+	c.HA.DemoteTimeout = "30s"
 	c.Output.File.MaxBytes = 50 * 1024 * 1024
 	c.Output.File.MaxBackups = 5
 	c.Output.Kafka.MaxEvents = 1_000

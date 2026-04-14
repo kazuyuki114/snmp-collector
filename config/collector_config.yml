@@ -25,7 +25,7 @@ processors:
   enum:
     enable: true
   counter:
-    delta_enable: true
+    delta_enable: false
     purge_interval: 5m
 
 format:
@@ -44,6 +44,48 @@ config_paths:
 
 health:
   addr: ":9080"
+
+# ── High Availability ───────────────────────────────────────────────────────
+#
+# Two-node Active/Standby setup:
+#   Primary (DC)  — role: primary  — starts Active, reclaims on restart
+#   Standby (DR)  — role: standby  — monitors /health, fails over on N failures
+#
+# To test locally, run two instances on different ports:
+#
+#   Terminal 1 (Primary on :9080, /demote on :9080):
+#     snmpcollector -config config/collector_config.yml \
+#                   -health.addr :9080
+#
+#   Terminal 2 (Standby on :9081, /demote on :9081):
+#     snmpcollector -config config/collector_config.yml \
+#                   -collector.id dev-collector-02 \
+#                   -health.addr :9081 \
+#                   -ha.role standby \
+#                   -ha.peer.url http://localhost:9080
+#
+# Failover test:  kill Terminal 1 → after 3×5s=15s Terminal 2 goes Active.
+# Failback test:  restart Terminal 1 → it sends POST localhost:9081/demote →
+#                 Terminal 2 stops → Terminal 1 becomes Active.
+ha:
+  enabled: false
+  role: primary                      # primary | standby
+  peer_url: "http://localhost:9081"  # base URL of the OTHER node's health server
+
+  # Standby polls this often; lower = faster detection, higher = less traffic.
+  health_check_interval: 5s
+
+  # Per-request HTTP timeout for each GET /health call.
+  health_check_timeout: 5s
+
+  # Consecutive failures required before Standby promotes itself to Active.
+  # At the defaults above: 3 × 5s = 15 s worst-case failover time.
+  failover_threshold: 3
+
+  # Timeout for the Primary's POST /demote call to the Standby on startup.
+  # Must be long enough for the Standby's pipeline to fully drain (app.Stop).
+  # Increase if your poller.workers count is high and in-flight polls take longer.
+  demote_timeout: 30s
 
 output:
   # Set enabled: true on exactly one block. The others must have enabled: false.

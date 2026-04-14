@@ -17,8 +17,8 @@ import (
 	"log/slog"
 	"strconv"
 
-	"snmp/snmp-collector/internal/noop"
 	"snmp/snmp-collector/internal/models"
+	"snmp/snmp-collector/internal/noop"
 )
 
 // OTLP aggregation temporality constants (proto enum values).
@@ -100,8 +100,8 @@ func (f *Formatter) Format(metric *models.SNMPMetric) ([]byte, error) {
 func (f *Formatter) convert(m *models.SNMPMetric) exportMetricsServiceRequest {
 	timeNano := strconv.FormatInt(m.Timestamp.UnixNano(), 10)
 
-	// Build resource attributes from the device.
-	res := resource{Attributes: deviceAttributes(m.Device)}
+	// Build resource attributes from the device + collector identity.
+	res := resource{Attributes: deviceAttributes(m.Device, m.Metadata.CollectorID)}
 
 	// Group models.Metric values by name so each unique metric name becomes
 	// one OTLP Metric with multiple data points (one per instance / tag set).
@@ -160,8 +160,9 @@ func (f *Formatter) convert(m *models.SNMPMetric) exportMetricsServiceRequest {
 				ScopeMetrics: []scopeMetrics{
 					{
 						Scope: instrumentationScope{
-							Name:    f.cfg.ScopeName,
-							Version: f.cfg.ScopeVersion,
+							Name:       f.cfg.ScopeName,
+							Version:    f.cfg.ScopeVersion,
+							Attributes: scopeAttributes(m.Metadata),
 						},
 						Metrics: otelMetrics,
 					},
@@ -169,6 +170,26 @@ func (f *Formatter) convert(m *models.SNMPMetric) exportMetricsServiceRequest {
 			},
 		},
 	}
+}
+
+// scopeAttributes converts MetricMetadata fields into OTLP scope attributes.
+// These carry collector-side operational context that has no place in the
+// device resource or individual data-point attributes.
+func scopeAttributes(md models.MetricMetadata) []keyValue {
+	attrs := []keyValue{
+		strAttr("poll.status", md.PollStatus),
+		strAttr("poll.duration_ms", strconv.FormatInt(md.PollDurationMs, 10)),
+	}
+	if md.ObjectKey != "" {
+		attrs = append(attrs, strAttr("poll.object_key", md.ObjectKey))
+	}
+	if md.ErrorType != "" {
+		attrs = append(attrs, strAttr("poll.error_type", md.ErrorType))
+	}
+	if md.ErrorDetail != "" {
+		attrs = append(attrs, strAttr("poll.error_detail", md.ErrorDetail))
+	}
+	return attrs
 }
 
 // toDataPoint converts a single models.Metric to a numberDataPoint.
@@ -196,12 +217,18 @@ func toDataPoint(m models.Metric, timeNano string) (numberDataPoint, bool) {
 	return dp, true
 }
 
-// deviceAttributes converts a models.Device into OTLP resource attributes.
-func deviceAttributes(d models.Device) []keyValue {
+// deviceAttributes converts a models.Device and the collector identity into
+// OTLP resource attributes. collectorID is written as "collector.id" so
+// consumers can identify which collector instance produced the data — critical
+// in Active/Standby HA deployments where two nodes observe the same devices.
+func deviceAttributes(d models.Device, collectorID string) []keyValue {
 	attrs := []keyValue{
 		strAttr("host.name", d.Hostname),
 		strAttr("net.host.ip", d.IPAddress),
 		strAttr("snmp.version", d.SNMPVersion),
+	}
+	if collectorID != "" {
+		attrs = append(attrs, strAttr("collector.id", collectorID))
 	}
 	if d.Vendor != "" {
 		attrs = append(attrs, strAttr("device.vendor", d.Vendor))
@@ -293,8 +320,9 @@ type scopeMetrics struct {
 }
 
 type instrumentationScope struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
+	Name       string     `json:"name"`
+	Version    string     `json:"version,omitempty"`
+	Attributes []keyValue `json:"attributes,omitempty"`
 }
 
 type otelMetric struct {
