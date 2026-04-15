@@ -140,7 +140,10 @@ func (d *SNMPDecoder) Decode(raw RawPollResult) (DecodedPollResult, error) {
 		if raw.PollStatus == "error" {
 			return result, nil
 		}
-		d.logger.Warn("decode: empty varbind list",
+		// Poll succeeded but returned no PDUs at all. This typically means the
+		// device does not implement the MIB group (e.g. IPv6 objects on a non-IPv6
+		// device) or the BulkWalk walked off the end of the supported OID tree.
+		d.logger.Info("decode: poller returned no PDUs — object may not be supported by this device",
 			"device", raw.Device.Hostname,
 			"object", raw.ObjectDef.Key,
 		)
@@ -184,9 +187,15 @@ func (d *SNMPDecoder) Decode(raw RawPollResult) (DecodedPollResult, error) {
 			}
 		}
 		if allErrors {
-			d.logger.Warn("decode: empty varbind list",
+			// All returned PDUs are error sentinels (NoSuchObject / NoSuchInstance /
+			// EndOfMibView / Null). The device does not implement this MIB object or
+			// the specific OIDs requested are not present on this device type.
+			// Common causes: HC (64-bit) counter variants, IPv6 objects on IPv4-only
+			// devices, or vendor-specific MIBs not supported by this device.
+			d.logger.Info("decode: device returned only error responses — object not supported by this device",
 				"device", raw.Device.Hostname,
 				"object", raw.ObjectDef.Key,
+				"pdu_count", len(raw.Varbinds),
 			)
 		} else {
 			oids := make([]string, 0, len(raw.Varbinds))

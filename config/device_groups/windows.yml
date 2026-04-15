@@ -1,0 +1,10 @@
+windows:
+  object_groups:
+    # standards-based
+    - ietf_system
+    - ietf_host
+    - ietf_netif_ethernet
+    - ietf_ip         
+    - ietf_icmp_v4     
+    - ietf_tcp
+    - ietf_udp

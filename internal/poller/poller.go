@@ -86,7 +86,7 @@ func (p *SNMPPoller) Poll(ctx context.Context, job PollJob) (decoder.RawPollResu
 	result.PollStartedAt = time.Now()
 
 	if isScalar(job.ObjectDef) {
-		pdus, err = p.doGet(conn, job.ObjectDef)
+		pdus, err = p.doGet(conn, job.ObjectDef, job.Hostname)
 	} else if job.DeviceConfig.Version == "1" || !job.DeviceConfig.UseGetBulk {
 		pdus, err = p.doWalk(conn, job.ObjectDef)
 	} else {
@@ -123,7 +123,7 @@ func (p *SNMPPoller) Poll(ctx context.Context, job PollJob) (decoder.RawPollResu
 
 // doGet performs an SNMP Get for scalar objects. Each attribute OID gets ".0"
 // appended (scalar instance).
-func (p *SNMPPoller) doGet(conn *gosnmp.GoSNMP, objDef models.ObjectDefinition) ([]gosnmp.SnmpPDU, error) {
+func (p *SNMPPoller) doGet(conn *gosnmp.GoSNMP, objDef models.ObjectDefinition, hostname string) ([]gosnmp.SnmpPDU, error) {
 	oids := make([]string, 0, len(objDef.Attributes))
 	for _, attr := range objDef.Attributes {
 		oid := attr.OID
@@ -148,10 +148,33 @@ func (p *SNMPPoller) doGet(conn *gosnmp.GoSNMP, objDef models.ObjectDefinition) 
 		if end > len(oids) {
 			end = len(oids)
 		}
-		pkt, err := conn.Get(oids[i:end])
+		batch := oids[i:end]
+		pkt, err := conn.Get(batch)
 		if err != nil {
 			return all, err
 		}
+
+		if len(pkt.Variables) == 0 && len(batch) > 1 {
+			// Some SNMP agents (e.g. Windows) return an empty GET response when
+			// the batch contains OIDs they do not recognise (such as HC 64-bit
+			// counter variants), rather than returning per-OID NoSuchObject.
+			// Fall back to individual single-OID GETs so that supported OIDs
+			// are still collected while unsupported ones return NoSuchObject.
+			p.logger.Debug("doGet: batch returned empty response, falling back to per-OID GETs",
+				"device", hostname,
+				"object", objDef.Key,
+				"batch_size", len(batch),
+			)
+			for _, singleOID := range batch {
+				singlePkt, singleErr := conn.Get([]string{singleOID})
+				if singleErr != nil || len(singlePkt.Variables) == 0 {
+					continue
+				}
+				all = append(all, singlePkt.Variables...)
+			}
+			continue
+		}
+
 		all = append(all, pkt.Variables...)
 	}
 	return all, nil

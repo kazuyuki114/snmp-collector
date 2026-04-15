@@ -3,6 +3,10 @@ ietf_icmp:
     - IP-MIB::icmp
     - IPV6-ICMP-MIB::ipv6IfIcmpEntry
 
+ietf_icmp_v4:
+  objects:
+    - IP-MIB::icmp
+
 ietf_icmp_ext:
   objects:
     - IP-MIB::icmpStatsEntry
