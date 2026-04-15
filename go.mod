@@ -1,6 +1,6 @@
 module snmp/snmp-collector
 
-go 1.25.7
+go 1.25.3
 
 require (
 	github.com/IBM/sarama v1.47.0

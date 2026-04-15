@@ -144,26 +144,25 @@ func (p *SNMPPoller) doGet(conn *gosnmp.GoSNMP, objDef models.ObjectDefinition, 
 
 	var all []gosnmp.SnmpPDU
 	for i := 0; i < len(oids); i += maxOids {
-		end := i + maxOids
-		if end > len(oids) {
-			end = len(oids)
-		}
+		end := min(i+maxOids, len(oids))
 		batch := oids[i:end]
 		pkt, err := conn.Get(batch)
 		if err != nil {
 			return all, err
 		}
 
-		if len(pkt.Variables) == 0 && len(batch) > 1 {
-			// Some SNMP agents (e.g. Windows) return an empty GET response when
-			// the batch contains OIDs they do not recognise (such as HC 64-bit
-			// counter variants), rather than returning per-OID NoSuchObject.
-			// Fall back to individual single-OID GETs so that supported OIDs
-			// are still collected while unsupported ones return NoSuchObject.
-			p.logger.Debug("doGet: batch returned empty response, falling back to per-OID GETs",
+		if len(batch) > 1 && batchIsUnusable(pkt.Variables) {
+			// Some SNMP agents (e.g. Windows) mishandle multi-OID GET requests
+			// when the batch contains OIDs they do not recognise. Two failure modes:
+			//   1. Empty Variables (0 PDUs returned despite valid OIDs in the batch).
+			//   2. All-error Variables (every OID returns NoSuchObject/NoSuchInstance
+			//      even for OIDs that are accessible via individual GET).
+			// Fall back to single-OID GETs so supported OIDs are still collected.
+			p.logger.Debug("doGet: batch response unusable, falling back to per-OID GETs",
 				"device", hostname,
 				"object", objDef.Key,
 				"batch_size", len(batch),
+				"batch_variables", len(pkt.Variables),
 			)
 			for _, singleOID := range batch {
 				singlePkt, singleErr := conn.Get([]string{singleOID})
@@ -230,6 +229,31 @@ func classifyError(err error) string {
 	}
 }
 
+// batchIsUnusable returns true when a GET response provides no useful data:
+// either the Variables list is empty, or every PDU is an error sentinel
+// (NoSuchObject, NoSuchInstance, EndOfMibView, Null).
+//
+// Some SNMP agents (notably Windows) exhibit one of two failure modes when a
+// multi-OID GET includes any OID they do not recognise:
+//  1. They return an empty PDU (0 Variables) instead of per-OID NoSuchObject.
+//  2. They return NoSuchObject for every OID in the batch, even ones that are
+//     accessible when queried individually.
+//
+// In both cases the caller should fall back to single-OID GETs.
+func batchIsUnusable(vars []gosnmp.SnmpPDU) bool {
+	if len(vars) == 0 {
+		return true
+	}
+	for i := range vars {
+		t := vars[i].Type
+		if t != gosnmp.NoSuchObject && t != gosnmp.NoSuchInstance &&
+			t != gosnmp.EndOfMibView && t != gosnmp.Null {
+			return false
+		}
+	}
+	return true
+}
+
 // isScalar returns true when the object definition has no table index —
 // meaning all attributes are scalar OIDs.
 //
@@ -265,12 +289,9 @@ func LowestCommonOID(objDef models.ObjectDefinition) string {
 	parts := strings.Split(oids[0], ".")
 	for _, oid := range oids[1:] {
 		other := strings.Split(oid, ".")
-		minLen := len(parts)
-		if len(other) < minLen {
-			minLen = len(other)
-		}
+		minLen := min(len(parts), len(other))
 		match := 0
-		for i := 0; i < minLen; i++ {
+		for i := range minLen {
 			if parts[i] != other[i] {
 				break
 			}
