@@ -173,11 +173,33 @@ func (d *SNMPDecoder) Decode(raw RawPollResult) (DecodedPollResult, error) {
 	}
 
 	if len(decoded) == 0 {
-		d.logger.Warn("decode: no attributes matched — PDUs may be outside the configured object tree",
-			"device", raw.Device.Hostname,
-			"object", raw.ObjectDef.Key,
-			"pdu_count", len(raw.Varbinds),
-		)
+		// Distinguish between "device doesn't support this MIB" (all PDUs are
+		// error sentinels like NoSuchObject/NoSuchInstance) vs "OIDs are outside
+		// the configured attribute tree" (real data returned but nothing matched).
+		allErrors := true
+		for i := range raw.Varbinds {
+			if !IsErrorType(raw.Varbinds[i].Type) {
+				allErrors = false
+				break
+			}
+		}
+		if allErrors {
+			d.logger.Warn("decode: empty varbind list",
+				"device", raw.Device.Hostname,
+				"object", raw.ObjectDef.Key,
+			)
+		} else {
+			oids := make([]string, 0, len(raw.Varbinds))
+			for i := range raw.Varbinds {
+				oids = append(oids, raw.Varbinds[i].Name)
+			}
+			d.logger.Warn("decode: no attributes matched — PDUs may be outside the configured object tree",
+				"device", raw.Device.Hostname,
+				"object", raw.ObjectDef.Key,
+				"pdu_count", len(raw.Varbinds),
+				"received_oids", oids,
+			)
+		}
 	}
 
 	d.logger.Debug("decode: completed",

@@ -37,6 +37,12 @@ type DeviceConfig struct {
 	// MaxConcurrentPolls limits how many concurrent SNMP requests may be
 	// in-flight to this device at any time (default 4).
 	MaxConcurrentPolls int
+
+	// UseGetBulk controls whether BulkWalk (GETBULK) is used for table objects
+	// on v2c/v3 devices. Set to false to fall back to regular Walk (GETNEXT),
+	// which is more compatible with devices like Windows SNMP service that
+	// cannot handle large bulk responses. Default true.
+	UseGetBulk bool
 }
 
 // V3Credentials holds a single set of SNMPv3 security parameters.
@@ -84,4 +90,5 @@ type rawDeviceEntry struct {
 	V3Credentials      []V3Credentials `yaml:"v3_credentials"`
 	DeviceGroups       []string        `yaml:"device_groups"`
 	MaxConcurrentPolls int             `yaml:"max_concurrent_polls"`
+	UseGetBulk         *bool           `yaml:"use_getbulk"`
 }

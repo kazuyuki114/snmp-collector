@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gosnmp/gosnmp"
-	"snmp/snmp-collector/internal/noop"
-	"snmp/snmp-collector/internal/models"
 	"snmp/snmp-collector/internal/config"
 	"snmp/snmp-collector/internal/decoder"
+	"snmp/snmp-collector/internal/models"
+	"snmp/snmp-collector/internal/noop"
+
+	"github.com/gosnmp/gosnmp"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +87,7 @@ func (p *SNMPPoller) Poll(ctx context.Context, job PollJob) (decoder.RawPollResu
 
 	if isScalar(job.ObjectDef) {
 		pdus, err = p.doGet(conn, job.ObjectDef)
-	} else if job.DeviceConfig.Version == "1" {
+	} else if job.DeviceConfig.Version == "1" || !job.DeviceConfig.UseGetBulk {
 		pdus, err = p.doWalk(conn, job.ObjectDef)
 	} else {
 		pdus, err = p.doBulkWalk(conn, job.ObjectDef)
@@ -208,8 +209,12 @@ func classifyError(err error) string {
 
 // isScalar returns true when the object definition has no table index —
 // meaning all attributes are scalar OIDs.
+//
+// Objects that use augments: to borrow an index from another table are
+// still table objects and must not be treated as scalar, even though their
+// Index slice is empty.
 func isScalar(objDef models.ObjectDefinition) bool {
-	return len(objDef.Index) == 0
+	return len(objDef.Index) == 0 && objDef.Augments == ""
 }
 
 // LowestCommonOID finds the shortest OID prefix that is a parent of all

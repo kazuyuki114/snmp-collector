@@ -1,4 +1,4 @@
-myswitch.lab:
+localhost:
   ip: 127.0.0.1
   port: 161
   poll_interval: 120
@@ -12,5 +12,5 @@ myswitch.lab:
       privacy_protocol: aes
       privacy_passphrase: testPriv
   device_groups:
-    - generic
+    - linux
   max_concurrent_polls: 2

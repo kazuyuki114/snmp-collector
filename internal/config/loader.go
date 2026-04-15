@@ -210,6 +210,11 @@ func resolveDevice(e rawDeviceEntry) DeviceConfig {
 		maxPolls = 4
 	}
 
+	useGetBulk := true // default option
+	if e.UseGetBulk != nil {
+		useGetBulk = *e.UseGetBulk
+	}
+
 	return DeviceConfig{
 		IP:                 e.IP,
 		Port:               port,
@@ -222,6 +227,7 @@ func resolveDevice(e rawDeviceEntry) DeviceConfig {
 		V3Credentials:      e.V3Credentials,
 		DeviceGroups:       e.DeviceGroups,
 		MaxConcurrentPolls: maxPolls,
+		UseGetBulk:         useGetBulk,
 	}
 }
 

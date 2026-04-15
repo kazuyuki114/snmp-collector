@@ -36,7 +36,7 @@ format:
   otel_scope_name: "snmp-collector"
   otel_scope_version: "1.0.0"
 
-config_reload_interval: 100s
+config_reload_interval: 110s
 
 config_paths:
   devices:       config/devices
@@ -71,7 +71,7 @@ health:
 # Failback test:  restart Terminal 1 → it sends POST localhost:9081/demote →
 #                 Terminal 2 stops → Terminal 1 becomes Active.
 ha:
-  enabled: false
+  enabled: true
   role: primary                      # primary | standby
   peer_url: "http://localhost:9081"  # base URL of the OTHER node's health server
 
@@ -105,8 +105,8 @@ output:
   # ── File output ────────────────────────────────────────────────────────────
   file:
     enabled: false
-    path: "snmp-metrics.json"              # e.g. /tmp/snmp-metrics.json
-    max_bytes: 10485760   # 10 MB
+    path: "snmp-metrics.json"              
+    max_bytes: 10485760   
     max_backups: 3
 
   # ── Kafka output ───────────────────────────────────────────────────────────
