@@ -18,16 +18,15 @@ import (
 	"sync"
 	"time"
 
-	jsonformat "snmp/snmp-collector/internal/format/json"
-	otelformat "snmp/snmp-collector/internal/format/otel"
-	"snmp/snmp-collector/internal/noop"
-	"snmp/snmp-collector/internal/models"
 	"snmp/snmp-collector/internal/config"
-	"snmp/snmp-collector/internal/poller"
-	"snmp/snmp-collector/internal/scheduler"
-	"snmp/snmp-collector/internal/plugin"
-	"snmp/snmp-collector/internal/producer/metrics"
 	"snmp/snmp-collector/internal/decoder"
+	jsonformat "snmp/snmp-collector/internal/format/json"
+	"snmp/snmp-collector/internal/models"
+	"snmp/snmp-collector/internal/noop"
+	"snmp/snmp-collector/internal/plugin"
+	"snmp/snmp-collector/internal/poller"
+	"snmp/snmp-collector/internal/producer/metrics"
+	"snmp/snmp-collector/internal/scheduler"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,19 +61,8 @@ type Config struct {
 	// CounterDeltaEnabled controls counter delta computation for Counter32/64.
 	CounterDeltaEnabled bool
 
-	// PrettyPrint enables indented JSON output (ignored when OTelFormat is true).
+	// PrettyPrint enables indented JSON output.
 	PrettyPrint bool
-
-	// OTelFormat switches the formatter from the custom JSON schema to
-	// OpenTelemetry OTLP JSON (ExportMetricsServiceRequest).
-	OTelFormat bool
-
-	// OTelScopeName overrides the OTLP instrumentation scope name.
-	// Defaults to "snmp-collector".
-	OTelScopeName string
-
-	// OTelScopeVersion sets the OTLP instrumentation scope version string.
-	OTelScopeVersion string
 
 	// Transport is the output destination for single-lifecycle deployments.
 	// It must implement plugin.Transport. nil defaults to a stdout transport.
@@ -235,16 +223,9 @@ func (a *App) Start(ctx context.Context) error {
 		a.transport = newWriterTransport(os.Stdout, a.logger)
 	}
 
-	if a.cfg.OTelFormat {
-		a.formatter = otelformat.New(otelformat.Config{
-			ScopeName:    a.cfg.OTelScopeName,
-			ScopeVersion: a.cfg.OTelScopeVersion,
-		}, a.logger)
-	} else {
-		a.formatter = jsonformat.New(jsonformat.Config{
-			PrettyPrint: a.cfg.PrettyPrint,
-		}, a.logger)
-	}
+	a.formatter = jsonformat.New(jsonformat.Config{
+		PrettyPrint: a.cfg.PrettyPrint,
+	}, a.logger)
 
 	a.prod = metrics.New(metrics.Config{
 		CollectorID:         a.cfg.CollectorID,
@@ -401,7 +382,7 @@ func (a *App) startDecodeStage(_ context.Context) {
 					}
 				}
 				// Only drop empty results from successful polls.
-			if len(decoded.Varbinds) == 0 && decoded.PollStatus == "success" {
+				if len(decoded.Varbinds) == 0 && decoded.PollStatus == "success" {
 					continue
 				}
 				a.decodedCh <- decoded
@@ -439,7 +420,7 @@ func (a *App) startProduceStage(_ context.Context) {
 					continue
 				}
 				// Only drop zero-metric results from successful polls.
-			if len(metric.Metrics) == 0 && metric.Metadata.PollStatus == "success" {
+				if len(metric.Metrics) == 0 && metric.Metadata.PollStatus == "success" {
 					continue
 				}
 				a.metricCh <- metric

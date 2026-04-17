@@ -32,9 +32,7 @@ processors:
     purge_interval: 5m
 
 format:
-  otel: true
-  otel_scope_name: "snmp-collector"
-  otel_scope_version: "1.0.0"
+  json: true
 
 config_reload_interval: 110s
 
@@ -91,12 +89,9 @@ ha:
   demote_timeout: 30s
 
 output:
-  # Set enabled: true on exactly one block. The others must have enabled: false.
-  # Default (all false or stdout enabled): write to stdout.
-
   # ── Send retry ─────────────────────────────────────────────────────────────
-  send_max_retry: 3       # 0 = no retries (fail immediately on first error)
-  send_retry_delay: 1s    # pause between retries (e.g. 500ms, 2s)
+  send_max_retry: 3       
+  send_retry_delay: 1s    
 
   # ── Stdout output ──────────────────────────────────────────────────────────
   stdout:
