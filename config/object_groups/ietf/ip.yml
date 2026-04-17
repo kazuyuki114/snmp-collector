@@ -4,6 +4,10 @@ ietf_ip:
     - IP-FORWARD-MIB::ipForward
     - IPV6-MIB::ipv6MIBObjects
 
+ietf_ip_v4:
+  objects:
+    - IP-MIB::ip
+
 ietf_ip_ext:
   objects:
     - IP-MIB::ipSystemStatsEntry

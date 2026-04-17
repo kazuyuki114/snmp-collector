@@ -142,18 +142,6 @@ type CollectorConfig struct {
 
 	Format struct {
 		Pretty bool `yaml:"pretty"`
-
-		// OTel switches the output format from the custom JSON schema to
-		// OpenTelemetry OTLP JSON (ExportMetricsServiceRequest).
-		// When true, the format.pretty field is ignored.
-		OTel bool `yaml:"otel"`
-
-		// OTelScopeName overrides the OTLP instrumentation scope name.
-		// Defaults to "snmp-collector".
-		OTelScopeName string `yaml:"otel_scope_name"`
-
-		// OTelScopeVersion sets the OTLP instrumentation scope version string.
-		OTelScopeVersion string `yaml:"otel_scope_version"`
 	} `yaml:"format"`
 
 	// ConfigPaths overrides the env-variable-driven data directories.

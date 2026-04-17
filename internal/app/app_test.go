@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"snmp/snmp-collector/internal/models"
 	"snmp/snmp-collector/internal/config"
+	"snmp/snmp-collector/internal/models"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
