@@ -48,6 +48,10 @@ type Config struct {
 	// Default: 500.
 	PollerWorkers int
 
+	// JobQueueSize is the capacity of the poller job queue.
+	// 0 means auto-compute from loaded config (recommended).
+	JobQueueSize int
+
 	// BufferSize is the capacity of each inter-stage channel.
 	// Default: 10000.
 	BufferSize int
@@ -238,7 +242,13 @@ func (a *App) Start(ctx context.Context) error {
 
 	a.connPool = poller.NewConnectionPool(a.cfg.PoolOptions, a.logger)
 	a.snmpPoller = poller.NewSNMPPoller(a.connPool, a.logger)
-	a.workerPool = poller.NewWorkerPool(a.cfg.PollerWorkers, a.snmpPoller, a.rawCh, a.logger)
+
+	jobQueueSize := a.cfg.JobQueueSize
+	if jobQueueSize <= 0 {
+		totalJobs := len(scheduler.ResolveJobs(loadedCfg, a.logger))
+		jobQueueSize = max(totalJobs, a.cfg.PollerWorkers*2)
+	}
+	a.workerPool = poller.NewWorkerPool(a.cfg.PollerWorkers, a.snmpPoller, a.rawCh, jobQueueSize, a.logger)
 
 	a.sched = scheduler.New(loadedCfg, a.workerPool, a.logger)
 

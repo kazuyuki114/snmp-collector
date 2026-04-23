@@ -123,8 +123,9 @@ type CollectorConfig struct {
 	} `yaml:"pipeline"`
 
 	Poller struct {
-		Workers int `yaml:"workers"`
-		Pool    struct {
+		Workers      int `yaml:"workers"`
+		JobQueueSize int `yaml:"job_queue_size"`
+		Pool         struct {
 			MaxIdle     int    `yaml:"max_idle"`
 			IdleTimeout string `yaml:"idle_timeout"` // e.g. "30s"
 		} `yaml:"pool"`
