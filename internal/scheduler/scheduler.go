@@ -140,6 +140,14 @@ func (s *Scheduler) Stop() {
 	<-s.done
 }
 
+// SetPool atomically swaps the JobSubmitter used for dispatching poll jobs.
+// Safe to call concurrently with the scheduling loop.
+func (s *Scheduler) SetPool(pool JobSubmitter) {
+	s.mu.Lock()
+	s.pool = pool
+	s.mu.Unlock()
+}
+
 // Reload atomically replaces the running config. New devices are polled
 // immediately; removed devices stop; changed intervals take effect on the
 // next cycle.

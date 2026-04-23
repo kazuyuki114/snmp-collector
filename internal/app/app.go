@@ -48,6 +48,10 @@ type Config struct {
 	// Default: 500.
 	PollerWorkers int
 
+	// JobQueueSize is the capacity of the poller job queue.
+	// 0 means auto-compute from loaded config (recommended).
+	JobQueueSize int
+
 	// BufferSize is the capacity of each inter-stage channel.
 	// Default: 10000.
 	BufferSize int
@@ -168,8 +172,9 @@ type App struct {
 	formattedCh chan []byte
 
 	// Lifecycle.
-	cancel context.CancelFunc
-	wg     sync.WaitGroup // tracks pipeline goroutines
+	pipeCtx context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup // tracks pipeline goroutines
 }
 
 // New constructs an App. It does not start anything — call Start for that.
@@ -238,12 +243,19 @@ func (a *App) Start(ctx context.Context) error {
 
 	a.connPool = poller.NewConnectionPool(a.cfg.PoolOptions, a.logger)
 	a.snmpPoller = poller.NewSNMPPoller(a.connPool, a.logger)
-	a.workerPool = poller.NewWorkerPool(a.cfg.PollerWorkers, a.snmpPoller, a.rawCh, a.logger)
+
+	jobQueueSize := a.cfg.JobQueueSize
+	if jobQueueSize <= 0 {
+		totalJobs := len(scheduler.ResolveJobs(loadedCfg, a.logger))
+		jobQueueSize = max(totalJobs, a.cfg.PollerWorkers*2)
+	}
+	a.workerPool = poller.NewWorkerPool(a.cfg.PollerWorkers, a.snmpPoller, a.rawCh, jobQueueSize, a.logger)
 
 	a.sched = scheduler.New(loadedCfg, a.workerPool, a.logger)
 
 	// ── 4. Create a cancellable context for all goroutines ──────────────
 	pipeCtx, cancel := context.WithCancel(ctx)
+	a.pipeCtx = pipeCtx
 	a.cancel = cancel
 
 	// ── 5. Start pipeline goroutines (transport first, sources last) ─────
@@ -333,7 +345,8 @@ func (a *App) Stop() {
 
 // Reload atomically replaces the running configuration. New devices are polled
 // immediately; removed devices stop; changed intervals take effect on the next
-// cycle. Returns an error if the new configuration fails to load.
+// cycle. The worker pool is recreated so the job queue is always sized to the
+// current device set. Returns an error if the new configuration fails to load.
 func (a *App) Reload() error {
 	a.logger.Info("app: reloading configuration")
 	newCfg, err := config.Load(a.cfg.ConfigPaths, a.logger)
@@ -341,12 +354,32 @@ func (a *App) Reload() error {
 		return fmt.Errorf("app: reload config: %w", err)
 	}
 
+	// Recompute queue size for the incoming device set.
+	jobQueueSize := a.cfg.JobQueueSize
+	if jobQueueSize <= 0 {
+		totalJobs := len(scheduler.ResolveJobs(newCfg, a.logger))
+		jobQueueSize = max(totalJobs, a.cfg.PollerWorkers*2)
+	}
+
+	// Start the new pool BEFORE touching the old one so the scheduler always
+	// has a live channel to submit to — closing the old channel while the
+	// scheduler is still pointing at it causes a send-on-closed-channel panic.
+	newPool := poller.NewWorkerPool(a.cfg.PollerWorkers, a.snmpPoller, a.rawCh, jobQueueSize, a.logger)
+	newPool.Start(a.pipeCtx)
+
+	// Redirect the scheduler to the new pool, then drain the old one.
+	a.sched.SetPool(newPool)
+	a.workerPool.Stop()
+
+	// Reload scheduler entries now that the old pool is drained.
 	a.sched.Reload(newCfg)
+	a.workerPool = newPool
 	a.loadedCfg = newCfg
 
 	a.logger.Info("app: configuration reloaded",
 		"devices", len(newCfg.Devices),
 		"object_defs", len(newCfg.ObjectDefs),
+		"job_queue_size", jobQueueSize,
 	)
 	return nil
 }

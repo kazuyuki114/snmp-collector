@@ -403,7 +403,7 @@ func TestWorkerPool_Dispatch(t *testing.T) {
 	mp := &mockPoller{}
 	out := make(chan decoder.RawPollResult, 10)
 
-	wp := poller.NewWorkerPool(4, mp, out, nil)
+	wp := poller.NewWorkerPool(4, mp, out, 0, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wp.Start(ctx)
@@ -456,7 +456,7 @@ func TestWorkerPool_ContextCancel(t *testing.T) {
 	}
 	out := make(chan decoder.RawPollResult, 10)
 
-	wp := poller.NewWorkerPool(2, mp, out, nil)
+	wp := poller.NewWorkerPool(2, mp, out, 0, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	wp.Start(ctx)
 
@@ -499,7 +499,7 @@ func TestWorkerPool_TrySubmit_Full(t *testing.T) {
 	}
 	out := make(chan decoder.RawPollResult, 10)
 
-	wp := poller.NewWorkerPool(1, mp, out, nil) // 1 worker, channel cap = 2
+	wp := poller.NewWorkerPool(1, mp, out, 0, nil) // 1 worker, channel cap = 2
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wp.Start(ctx)
@@ -541,7 +541,7 @@ func TestWorkerPool_PollError_NoVarbinds(t *testing.T) {
 		},
 	}
 	out := make(chan decoder.RawPollResult, 10)
-	wp := poller.NewWorkerPool(2, mp, out, nil)
+	wp := poller.NewWorkerPool(2, mp, out, 0, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	wp.Start(ctx)

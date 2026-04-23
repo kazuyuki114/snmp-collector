@@ -27,9 +27,12 @@ type WorkerPool struct {
 
 // NewWorkerPool creates a pool of numWorkers goroutines that execute poll jobs
 // using the supplied Poller and send results to output.
-func NewWorkerPool(numWorkers int, poller Poller, output chan<- decoder.RawPollResult, logger *slog.Logger) *WorkerPool {
+func NewWorkerPool(numWorkers int, poller Poller, output chan<- decoder.RawPollResult, jobQueueSize int, logger *slog.Logger) *WorkerPool {
 	if numWorkers <= 0 {
 		numWorkers = 100
+	}
+	if jobQueueSize <= 0 {
+		jobQueueSize = numWorkers * 2
 	}
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(noop.Writer{}, nil))
@@ -39,7 +42,7 @@ func NewWorkerPool(numWorkers int, poller Poller, output chan<- decoder.RawPollR
 		poller:     poller,
 		output:     output,
 		logger:     logger,
-		jobs:       make(chan PollJob, numWorkers*2),
+		jobs:       make(chan PollJob, jobQueueSize),
 	}
 }
 
